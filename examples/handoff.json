@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "operations": [
+    {
+      "id": "op-1",
+      "author": "alpha",
+      "recipient": "beta",
+      "action": "comment",
+      "context": "manual",
+      "destination": "fixture:page/comments",
+      "payload": "A small light."
+    }
+  ],
+  "receipts": [
+    {
+      "id": "service-accepted",
+      "operation_id": "op-1",
+      "observer": "alpha",
+      "kind": "accepted",
+      "observed_at": "2026-01-01T10:00:00Z",
+      "recorded_at": "2026-01-01T10:00:00Z",
+      "evidence_ref": "fixture:evidence/service-accepted",
+      "attempt_id": "attempt-1",
+      "remote_ref": "fixture:comment/one",
+      "content_sha256": "c2dd59ac5e839eba2062a36d269aae82f919d22b669d5d61fbe4636f185ed906",
+      "observed_destination": "fixture:page/comments"
+    },
+    {
+      "id": "sender-readback",
+      "operation_id": "op-1",
+      "observer": "alpha",
+      "kind": "readback",
+      "observed_at": "2026-01-01T10:01:00Z",
+      "recorded_at": "2026-01-01T10:01:00Z",
+      "evidence_ref": "fixture:evidence/sender-readback",
+      "remote_ref": "fixture:comment/one",
+      "content_sha256": "c2dd59ac5e839eba2062a36d269aae82f919d22b669d5d61fbe4636f185ed906",
+      "observed_destination": "fixture:page/comments"
+    },
+    {
+      "id": "recipient-readback",
+      "operation_id": "op-1",
+      "observer": "beta",
+      "kind": "readback",
+      "observed_at": "2026-01-01T10:01:00Z",
+      "recorded_at": "2026-01-01T10:01:00Z",
+      "evidence_ref": "fixture:evidence/recipient-readback",
+      "remote_ref": "fixture:comment/one",
+      "content_sha256": "c2dd59ac5e839eba2062a36d269aae82f919d22b669d5d61fbe4636f185ed906",
+      "observed_destination": "fixture:page/comments"
+    },
+    {
+      "id": "ack-received",
+      "operation_id": "op-1",
+      "observer": "alpha",
+      "kind": "ack_received",
+      "observed_at": "2026-01-01T10:02:00Z",
+      "recorded_at": "2026-01-01T10:02:00Z",
+      "evidence_ref": "fixture:evidence/ack-received",
+      "remote_ref": "fixture:comment/one",
+      "content_sha256": "c2dd59ac5e839eba2062a36d269aae82f919d22b669d5d61fbe4636f185ed906",
+      "observed_destination": "fixture:page/comments",
+      "acknowledged_by": "beta"
+    }
+  ],
+  "observations": [
+    {
+      "id": "cap-1",
+      "subject": "alpha",
+      "observer": "alpha",
+      "action": "comment",
+      "context": "manual",
+      "environment": "fixture:workspace",
+      "outcome": "worked",
+      "basis": "direct",
+      "observed_at": "2026-01-01T10:00:00Z",
+      "recorded_at": "2026-01-01T10:00:00Z",
+      "recheck_after": "2026-01-01T10:02:00Z",
+      "evidence_ref": "fixture:capability"
+    }
+  ]
+}
