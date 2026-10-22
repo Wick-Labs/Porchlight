@@ -87,21 +87,24 @@ class RetractionTests(unittest.TestCase):
         self.assertFalse(state["readback_match"])
         self.assertEqual(state["retracted_receipts"], ["r"])
 
-    def test_retracting_a_retraction_is_rejected_in_either_arrival_order(self):
-        # v0.1 does not resurrect: a mistaken retraction stays visible in the journal.
-        first = dataset(receipts=[receipt("r", "readback"), retract("x", "r")])
-        p.import_data(self.db, first)
-        before = p.read_data(self.db)
+    def test_retracting_a_retraction_is_inert_in_either_arrival_order(self):
+        # Revised with the late-target fix: no resurrection and no poisoned imports.
         for observer in ("alpha", "beta"):
-            with self.subTest(observer=observer), self.assertRaises(p.Invalid):
-                p.import_data(self.db, dataset(receipts=[retract("y", "x", observer=observer, time=T2)]))
-        self.assertEqual(p.read_data(self.db), before)
-        other = Path(self.directory.name) / "late-target.sqlite3"
-        p.initialize(other)
-        p.import_data(other, dataset(receipts=[retract("y", "x", time=T2)]))
-        with self.assertRaises(p.Invalid):
-            p.import_data(other, first)
-        self.assertEqual([r["id"] for r in p.read_data(other)["receipts"]], ["y"])
+            for reverse in (False, True):
+                with self.subTest(observer=observer, reverse=reverse):
+                    db = Path(self.directory.name) / f"late-{observer}-{reverse}.sqlite3"
+                    p.initialize(db)
+                    rows = [receipt("r", "readback"), retract("x", "r"),
+                            retract("y", "x", observer=observer, time=T2)]
+                    p.import_data(db, dataset())
+                    for row in reversed(rows) if reverse else rows:
+                        p.import_data(db, dataset(operations=[], receipts=[row]))
+                    data = p.read_data(db)
+                    self.assertEqual({r["id"] for r in data["receipts"]}, {"r", "x", "y"})
+                    self.assertEqual(p.project(data, "op-1", "alpha")["retracted_receipts"], ["r"])
+                    self.assertEqual(p.unresolved(data)["invalid_retractions"], [
+                        {"receipt_id": "y", "retracts": "x", "observer": observer,
+                         "reasons": ["target_is_retraction"]}])
 
     def test_unknown_target_is_held_then_applies_when_target_arrives(self):
         p.import_data(self.db, dataset(receipts=[retract("x", "late")]))
@@ -120,13 +123,9 @@ class RetractionTests(unittest.TestCase):
         p.import_data(self.db, dataset(operations=[], receipts=[retract("x", "r")]))
         self.assertEqual([r["receipt_id"] for r in p.unresolved(p.read_data(self.db))["orphan_receipts"]], ["x"])
 
-    def test_invalid_retractions_are_rejected(self):
+    def test_intrinsically_invalid_retractions_are_rejected(self):
         cases = {
             "self": [retract("x", "x")],
-            "cycle": [retract("x", "y"), retract("y", "x")],
-            "long cycle": [retract("x", "y"), retract("y", "z"), retract("z", "x")],
-            "retraction of retraction": [receipt("r", "readback"), retract("x", "r"), retract("y", "x")],
-            "cross operation": [receipt("r", "readback", operation("op-2")), retract("x", "r")],
             "no reason": [{k: v for k, v in retract("x", "r").items() if k != "reason"}],
             "blank reason": [retract("x", "r", reason=" ")],
             "no target": [{k: v for k, v in retract("x", "r").items() if k != "retracts"}],
@@ -139,12 +138,14 @@ class RetractionTests(unittest.TestCase):
             with self.subTest(name), self.assertRaises(p.Invalid):
                 p.validate(dataset(operations=[operation(), operation("op-2")], receipts=rows))
 
-    def test_cross_operation_target_arriving_later_rolls_back(self):
+    def test_cross_operation_target_arriving_later_is_not_blocked(self):
         p.import_data(self.db, dataset(operations=[operation(), operation("op-2")], receipts=[retract("x", "r")]))
-        before = p.read_data(self.db)
-        with self.assertRaises(p.Invalid):
-            p.import_data(self.db, dataset(receipts=[receipt("r", "readback", operation("op-2"))]))
-        self.assertEqual(p.read_data(self.db), before)
+        p.import_data(self.db, dataset(receipts=[receipt("r", "readback", operation("op-2"))]))
+        data = p.read_data(self.db)
+        self.assertTrue(p.project(data, "op-2", "alpha")["readback_match"])
+        self.assertEqual(p.project(data, "op-2", "alpha")["retracted_receipts"], [])
+        self.assertEqual(p.unresolved(data)["invalid_retractions"], [
+            {"receipt_id": "x", "retracts": "r", "observer": "alpha", "reasons": ["operation_mismatch"]}])
 
     def test_seeded_single_record_import_permutations_are_identical(self):
         rows = [receipt("a", "accepted"), receipt("r", "readback", time=T1), receipt("k", "ack_received", time=T2),

@@ -174,16 +174,10 @@ def validate(data: Any) -> dict[str, Any]:
                 ready.append(target)
     if visited != len(operations):
         raise Invalid("supersession cycle")
-    # A retraction may name a receipt that has not arrived yet; it is held, like an
-    # orphan. Once both exist they must concern the same operation. Retracting a
-    # retraction is not supported in v0.1, which also rules out retraction cycles.
-    receipts = {r["id"]: r for r in result["receipts"]}
-    for r in receipts.values():
-        target = receipts.get(r.get("retracts", ""))
-        if target is not None and target["operation_id"] != r["operation_id"]:
-            raise Invalid("a retraction cannot cross operations")
-        if target is not None and target["kind"] == "retract":
-            raise Invalid("a retraction cannot be retracted")
+    # Relationship defects depend on records that may arrive later. Retain and
+    # diagnose them instead of letting an early bad withdrawal block its target's
+    # future import. Intrinsically malformed/self-retracting records were rejected
+    # above; invalid relationships never acquire a withdrawal effect.
     return result
 
 
@@ -191,7 +185,28 @@ def _withdrawn(receipts: list[dict[str, Any]]) -> set[str]:
     """IDs withdrawn by a retraction from the receipt's own observer."""
     by_id = {r["id"]: r for r in receipts}
     return {r["retracts"] for r in receipts if r["kind"] == "retract"
-            and r["retracts"] in by_id and by_id[r["retracts"]]["observer"] == r["observer"]}
+            and r["retracts"] in by_id and by_id[r["retracts"]]["observer"] == r["observer"]
+            and by_id[r["retracts"]]["operation_id"] == r["operation_id"]
+            and by_id[r["retracts"]]["kind"] != "retract"}
+
+
+def _invalid_retractions(receipts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Retained but inert relationships; never poison a later valid import."""
+    by_id = {r["id"]: r for r in receipts}
+    invalid = []
+    for r in sorted(receipts, key=lambda row: row["id"]):
+        if r["kind"] != "retract" or r["retracts"] not in by_id:
+            continue
+        target = by_id[r["retracts"]]
+        reasons = []
+        if target["operation_id"] != r["operation_id"]:
+            reasons.append("operation_mismatch")
+        if target["kind"] == "retract":
+            reasons.append("target_is_retraction")
+        if reasons:
+            invalid.append({"receipt_id": r["id"], "retracts": r["retracts"],
+                            "observer": r["observer"], "reasons": reasons})
+    return invalid
 
 
 def _scope_mismatch(receipt: dict[str, Any], op: dict[str, Any]) -> list[str]:
@@ -221,6 +236,7 @@ def unresolved(data: dict[str, Any]) -> dict[str, Any]:
             {"receipt_id": r["id"], "retracts": r["retracts"], "observer": r["observer"]}
             for r in data["receipts"] if r["kind"] == "retract" and r["retracts"] not in receipt_ids
         ],
+        "invalid_retractions": _invalid_retractions(data["receipts"]),
         # Held like orphans: the operation that arrived under this ID is not the
         # one the receipt expected, so the receipt is not bound to it.
         "scope_mismatched_receipts": [
