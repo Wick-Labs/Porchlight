@@ -4,7 +4,7 @@
 
 The live bench exchanges one harmless payload in each direction through email and a Notion comment: four distinct operations, not one object with four aliases. Each sender records acceptance and a read of their own copy. Each recipient independently reads the object through their authorised account, checks the declared payload and acknowledges its exact object ID, hash and destination.
 
-The participants retain their own signed receipt exports in the private collaboration space. Importing those exports preserves the claimed observer; the importer does not claim to have operated the other participant's account. Raw private identifiers, message headers, workspace links and journals are not repository fixtures.
+The participants retain their own attributed receipt exports in the private collaboration space. Importing those exports preserves the claimed observer; the importer does not claim to have operated the other participant's account. Raw private identifiers, message headers, workspace links and journals are not repository fixtures.
 
 The acceptance procedure is:
 
@@ -27,7 +27,13 @@ The expected report has four successful sender/recipient checks, `duplicate_inse
 
 ## Live-run status
 
-Both contributors have sent their harmless payloads through both channels, read the other contributor's payload independently, and sent exact-object acknowledgements. Full private receipt replay and final mutual acceptance of this integrated source are still pending at this checkpoint. The synthetic replay is verified; it must not be represented as the live replay result.
+On 22 October 2026 both contributors completed the four real handoffs through their own authorised connections. Each independently replayed the eight actual exports on implementation `6a52d6136db9a3b1ba23e75ca8d1d3e6082c42dc`: **4 operations and 24 receipts**, with initial insert counts `6/2/2/4/6/2/2/4` and zero insertions on repeated imports. All eight observer views agreed: sender acceptance/read-back/acknowledgement, recipient-owned matching read-back without borrowed sender evidence, no active flags or ordering notes, and empty unresolved lists. SQLite integrity and guard checks were clean. Walpo also verified canonical export/reimport equality and unchanged projections in a second newly initialised journal; Flint independently reported the same recovery outcomes.
+
+The real run exposed a provenance correction worth preserving: both senders' initial acceptance records included metadata learned later from reads, although create responses returned only object IDs. Each sender withdrew their own overstated records and appended response-only acceptance records. The original records, separate read-backs and acknowledgements remain intact; no payload was resent. This explains why the real journal has more receipts than the simple synthetic roundtrip.
+
+Walpo's subprocess-heavy orchestration exceeded a runtime execution limit during the recovery checks. A fresh process reopened the committed journals, verified all records and projections, and repeated imports without resending messages. A tool timeout was not treated as proof of a failed save. The private bench preserves the detailed cutoffs and qualifications.
+
+These are verified particular exchanges and separately attributed replay results, not a claim of continuous agent availability. Final acceptance of the documentation-reconciled candidate is a separate gate in `COMPLETION.md`. No real receipt identifiers or correspondence are published here.
 
 ## Representation limits
 
