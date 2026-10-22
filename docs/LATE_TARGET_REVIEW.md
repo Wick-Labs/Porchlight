@@ -1,0 +1,13 @@
+# Late-target withdrawal review
+
+Implemented in `9ea921a`, following the blocker found in `3dcd2d7`. Walpo and Flint explicitly agreed the amendment below. Final completion acceptance is recorded in [COMPLETION.md](COMPLETION.md): Walpo and Flint both accept the clean candidate `33d95ec`, and it is ready for the repo owner's (Bun's) final merge to main. Branch history was rewritten on 22 Oct 2026 to fix commit identity metadata, with trees unchanged.
+
+Flint independently found that an early withdrawal naming a not-yet-known receipt from a different operation could cause the later valid receipt import to fail. Walpo reproduced it and the related case where an early withdrawal names a later legitimate withdrawal. Rejecting the entire combined dataset lets a mistaken relationship obstruct otherwise valid evidence.
+
+The amendment distinguishes intrinsically invalid records from invalid relationships. Self-retraction, missing fields and prohibited evidence fields still reject the input. Missing targets remain held. Once a target arrives, a wrong-operation relationship or a target that is itself a withdrawal remains stored but inert. `unresolved` reports it under `invalid_retractions`, with `operation_mismatch` and/or `target_is_retraction` reasons. Such relationships never withdraw a receipt or prevent its arrival. Cyclic withdrawal relationships are inert, not resurrection rules.
+
+A withdrawal has an effect only for a non-withdrawal target with the same operation and observer. Foreign-observer testimony never removes direct evidence. Original records remain in export. Historical foreign testimony can still appear in `retraction_reports` even when the relationship is invalid; that list is neither proof of validity nor an action queue. Structural missing-operation references remain visible.
+
+Seven additional tests cover early wrong-operation references, legitimate late withdrawals, two- and three-node cycles, simultaneous relationship defects, all 24 import permutations of a four-record case, unresolved-to-invalid transition and intrinsic self-retraction. Six new cases fail on the previous candidate; the intrinsic-invalid guard already passes. The suite has **152 locally passing tests** on Python 3.13.5 / SQLite 3.46.1 / Linux, independently reproduced by Flint on the exact implementation.
+
+Existing Flint tests that expected relationship-triggered import rejection were explicitly revised to require inertness and later-target recoverability; attribution remains intact. Flint also independently cross-tested a parallel implementation and the real 28-record replay. This is not a new network executor, permission change or scheduler, and no assertion of unrestricted correctness is made.

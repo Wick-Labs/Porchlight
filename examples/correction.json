@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "receipts": [
+    {
+      "id": "alpha:mail:correction:accepted",
+      "operation_id": "alpha:mail:handoff-1",
+      "observer": "alpha",
+      "kind": "retract",
+      "retracts": "alpha:mail:handoff-1:alpha:accepted",
+      "reason": "Synthetic example: the initial receipt was recorded against the wrong evidence.",
+      "observed_at": "2026-01-01T10:01:00Z",
+      "recorded_at": "2026-01-01T10:01:00Z",
+      "evidence_ref": "fixture:correction/review"
+    },
+    {
+      "id": "alpha:mail:correction:readback",
+      "operation_id": "alpha:mail:handoff-1",
+      "observer": "alpha",
+      "kind": "retract",
+      "retracts": "alpha:mail:handoff-1:alpha:readback",
+      "reason": "Synthetic example: the initial receipt was recorded against the wrong evidence.",
+      "observed_at": "2026-01-01T10:01:00Z",
+      "recorded_at": "2026-01-01T10:01:00Z",
+      "evidence_ref": "fixture:correction/review"
+    }
+  ]
+}

@@ -1,17 +1,65 @@
 # Porchlight
 
-An experimental, offline handoff-evidence checker for collaborators who do not share the same execution context or availability.
+An offline evidence checker for interrupted collaboration. It answers **what was saved, what was observed, by whom, and for which exact handoff** without treating evidence as permission to act.
 
-**Work in progress.** Implementation and tests are being developed on [`work/evidence-core`](https://github.com/Wick-Labs/Porchlight/tree/work/evidence-core). The branch is a review surface, not a release.
+**v0.1 technical completion.** Walpo and Flint both accept the clean candidate `33d95ec` on `work/evidence-core`, reviewed in [PR #1](https://github.com/Wick-Labs/Porchlight/pull/1), against [the completion contract](docs/COMPLETION.md). It is ready for the repo owner's (Bun's) final merge to main. It is not a hosted service or autonomous messenger. Branch history was rewritten on 22 Oct 2026 to fix commit identity metadata, with trees unchanged.
 
-Porchlight records intentions and receipts, then derives what a particular observer has evidence for. Service acceptance, matching read-back, recipient visibility and acknowledgement are deliberately separate. Historical capability observations do not grant permission to act.
+## Run it
 
-The prototype has no network client, sender, scheduler or tool executor. It does not restore unavailable integrations or bypass execution restrictions.
+Use Python 3.11 or later. No third-party packages, account setup, API keys or installation are required. Local verification so far is Python 3.13.5 / SQLite 3.46.1 / Linux; other environments are not yet verified.
 
-## Public repository boundary
+```sh
+python -m unittest discover -s tests -v
+python examples/replay.py
+python porchlight.py --help
+```
 
-Only source, engineering documentation and synthetic examples belong here. Do not commit credentials, live inbox addresses, private workspace links or identifiers, correspondence, runtime journals or client material. Keep runtime data outside this checkout.
+`examples/replay.py` uses a temporary local journal and synthetic records. It checks four handoffs (two directions, two channels), sender acknowledgement, recipient-owned read-back, an idempotent retry, reopening the journal, an evidence correction and recovery from a fresh read. It contacts no services and exits nonzero when an expected result fails.
 
-Contributors can review the working branch and send concrete findings or patches through the channels available to them. Preserve authorship and distinguish proposed changes from verified results.
+## Step through the handoff
 
-No release or deployment has been made. Licensing is not yet selected.
+Choose a **new journal path outside this checkout**. On Windows, `py -3` can replace `python` when that is your Python launcher.
+
+```sh
+python porchlight.py init --db ../porchlight-demo.sqlite3
+python porchlight.py import --db ../porchlight-demo.sqlite3 examples/roundtrip.json
+python porchlight.py status --db ../porchlight-demo.sqlite3 alpha:mail:handoff-1 --observer alpha
+python porchlight.py status --db ../porchlight-demo.sqlite3 alpha:mail:handoff-1 --observer beta
+python porchlight.py import --db ../porchlight-demo.sqlite3 examples/roundtrip.json
+python porchlight.py unresolved --db ../porchlight-demo.sqlite3
+python porchlight.py check --db ../porchlight-demo.sqlite3
+```
+
+Expected: the first import inserts 20 records; the repeated import inserts zero. Alpha's sender view is accepted, read back and acknowledged. Beta has its own matching read-back, not borrowed sender acceptance or acknowledgement. All unresolved lists are empty; the SQLite check is `ok`, with no missing, mismatched or unexpected guards.
+
+Now correct a mistaken sender record without erasing it:
+
+```sh
+python porchlight.py import --db ../porchlight-demo.sqlite3 examples/correction.json
+python porchlight.py status --db ../porchlight-demo.sqlite3 alpha:mail:handoff-1 --observer alpha
+python porchlight.py import --db ../porchlight-demo.sqlite3 examples/repair.json
+python porchlight.py status --db ../porchlight-demo.sqlite3 alpha:mail:handoff-1 --observer alpha
+```
+
+The correction withdraws two identity anchors, so the acknowledgement becomes unbound. The repair adds a new matching read-back and restores that binding. The originals remain in `export` and `retracted_receipts`. No network resend occurred. A correction by a different observer cannot withdraw your evidence.
+
+These files are a synthetic counterpart to the contributors' private live email/Notion experiment, not an export of private accounts. [The bench procedure](docs/BENCH.md) explains how actual observations are recorded and what is and is not established.
+
+## Reading a result
+
+- `accepted` is the recorded service-level attempt outcome, not verified fulfilment. Inspect contradiction flags.
+- `readback_match` preserves matching non-withdrawn historical reads. `visibility` and `visibility_as_of` describe the latest observed view, not live availability.
+- `acknowledged` binds a recipient's acknowledgement to exact content, destination and remote-object identity. A thread containing a message is not that message.
+- `flags` expose active contradictions; `notes` include uncertain clock ordering. Historical excluded and withdrawn IDs stay available separately.
+
+Expected receipt action, context and destination prevent a wrong-scope receipt from binding. Source time, clock origin and recorder-declared trust keep a late observation from masquerading as object creation time. The [evidence contract](docs/EVIDENCE.md) specifies the details.
+
+## Recovery and privacy
+
+Each command opens the selected journal; no hidden global session is required. `init` refuses to overwrite an existing file. Imports are atomic, and exact retries deduplicate. A changed or additional SQL trigger blocks imports, but reading/export remains available for explicit recovery into a different newly initialised journal. Do not delete the original until its owner has verified recovery.
+
+`export` writes JSON to standard output and includes payloads. Keep it private. CLI inputs are limited to 8 MiB each and collections to 10,000 unique records each; a larger cumulative journal may require partitioned export records for reimport. This is a bounded local tool, not an unlimited archive.
+
+No mail/Notion client, scheduler, model runner, credential store, permission grant, automatic retry or deployment is included. It does not restore unavailable integrations. Records are trusted-recorder assertions, not cryptographic proof. Journals are unencrypted and survive only where the host retains the files.
+
+See [REVIEW.md](REVIEW.md) for verified results and remaining limits, and [CREDITS.md](CREDITS.md) for authorship. This public repository contains engineering material and synthetic examples only. No licence has been selected.
