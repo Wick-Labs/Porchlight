@@ -1,47 +1,74 @@
-# Evidence contract
+# Evidence contract — v0.1
 
-Porchlight derives a conservative view of supplied records. It does not observe services itself. A recorder is responsible for truthful provenance, stable identifiers, timestamp meaning and authorised collection. Records cannot turn an unavailable or forbidden action into an allowed one.
+Porchlight derives a conservative view of supplied records; it does not observe remote services itself. A recorder is responsible for truthful provenance, stable identifiers, timestamp meaning and authorised collection. Imported records cannot turn a forbidden or unavailable action into an allowed one.
 
 ## Identity and content
 
-Every record has a stable ID unique within its collection (`operations`, `receipts`, or `observations`). Use producer-namespaced opaque IDs for real records; short fixture IDs in the example are synthetic. An identical ID and canonical JSON object is an idempotent retry. A changed field under the same ID is a conflict, not an update. JSON key order is ignored; strings—including timestamp spelling and payload bytes—are preserved. Two textual timezone representations of the same instant are therefore conflicting record contents under one ID, even though time comparisons understand their equivalence.
+The envelope has `schema_version: 1` and optional `operations`, `receipts`, and `observations` arrays. Every record has an ID unique within its collection. Use producer-namespaced opaque IDs. An identical ID and canonical JSON object is an idempotent retry; any changed field under that ID is a conflict, not an update. JSON key order is ignored; strings, including timestamp spelling and payload bytes, are preserved. Offset-equivalent timestamp strings compare as the same instant but are still different record contents under one ID.
 
-An operation declares author, recipient, action, execution context, destination and exact UTF-8 payload. A replacement is a new operation with explicit `supersedes` links. A link cannot change the declared scope. Forks stay visible; later import order does not choose the truth. The local operation registry is trusted input, not an authenticated authorisation log.
+An operation declares author, recipient, action, execution context, destination and exact UTF-8 payload. Explicit `supersedes` links relate revisions of the same scope; forks stay visible and later import order does not choose a winner. Parent containers, matching text or hashes do not establish remote-object identity. Aliases are not implemented.
 
-The payload's SHA-256 uses exact UTF-8 bytes. Whitespace and Unicode normalization are not silently changed. A recipient acknowledgement binds to the operation's intended recipient, content hash, destination and the exact remote object supported by the observer's consistent acceptance or read-back evidence. A page containing a comment, or a thread containing a message, is not an alias for that object. No alias inference is implemented.
+Payload SHA-256 is over exact UTF-8 bytes. There is no silent whitespace or Unicode normalisation. When a recorder uses an application-level payload inside a larger envelope, it must document the extraction rule and the limits of the representation it actually read.
 
-A service acceptance may legitimately return only an object reference rather than a content hash. Missing hash/destination fields do not themselves contradict the operation. If either is supplied and disagrees, the contradiction is flagged and that acceptance cannot anchor an acknowledgement.
+## Receipt evidence and observer isolation
 
-## Separate kinds of evidence
+Every receipt names `id`, `operation_id`, `observer`, `kind`, `observed_at`, `recorded_at`, and `evidence_ref`.
 
-- `accepted`: the observer records service acceptance of an attempt. It is not read-back or recipient visibility; inspect contradiction flags.
-- `readback`: the observer records the exact object, payload hash and destination returned by a read. Historical matching evidence remains visible even when a later observation differs.
-- `ack_received`: the observer records an acknowledgement by the intended recipient. This is not the recipient's own direct read-back evidence.
-- `not_found`: absence from that observed view. It does not prove deletion, loss, failed delivery or denial.
-- `timeout`: an uncertain attempt outcome, not proof of failure. Later acceptance for the same attempt can resolve it without an automatic resend.
-- `blocked`: an explicit blocked attempt observation. It does not grant permission to retry elsewhere.
-- `report`: testimony about another observation. It is retained separately and cannot promote direct evidence flags.
+- `accepted`: recorded service acceptance of an attempt. It needs `attempt_id`; object identity may be returned without echoed content or destination.
+- `readback`: the observer records the exact remote object, payload hash and destination returned by a read. An incomplete read cannot verify the intended payload.
+- `ack_received`: the observer records an acknowledgement by the intended recipient, with exact object, hash, destination and `acknowledged_by`.
+- `not_found`: absence from that observed view, not proof of loss, deletion, failed delivery or denial.
+- `timeout`: an uncertain attempt outcome, not failure. It needs `attempt_id`.
+- `blocked`: an explicitly blocked attempt observation. It needs `attempt_id` and grants no permission to retry elsewhere.
+- `report`: testimony about another observation; it cannot promote direct evidence flags.
+- `retract`: withdrawal of an earlier receipt under the rules below.
 
-`accepted=true` and `latest_attempt_result="accepted"` preserve the reported service-level outcome: something was accepted for that attempt. They do not mean that the intended content or destination was verified. They can therefore coexist with `accepted_content_mismatch` or `accepted_destination_mismatch`; contradictory acceptance remains excluded from acknowledgement anchors, and matching read-back and recipient acknowledgement are separate conclusions.
+Projections use only the selected observer's own active receipts. An imported record labelled with another observer is that recorder's testimony; it is not proof the importer personally performed that observation. The schema has no signatures or identity authentication.
 
-Projections use only the selected observer's receipts. A bad acknowledgement cannot erase a separate valid acknowledgement or matching read-back. Conflicting direct anchors or direct read identities still make identity uncertain. `readback_match` is historical; `visibility` is the latest view actually observed, with `visibility_as_of`, not a live guarantee.
+`accepted=true` and `latest_attempt_result="accepted"` mean the service reportedly accepted something for an attempt, not that intended content or destination were fulfilled. Supplied acceptance metadata that contradicts the operation raises `accepted_content_mismatch` or `accepted_destination_mismatch` and cannot anchor an acknowledgement. Missing optional echoed metadata is not itself a contradiction.
 
-Attempts are grouped by `attempt_id` before resolving their outcomes. Accepted plus blocked for one attempt is contradictory. Otherwise acceptance resolves its timeout, and an explicit block is stronger than timeout alone. The summary follows the attempt(s) represented by the most recent supplied attempt-observation time; tied different results stay uncertain. It does not reconstruct unrecorded attempt-start times.
+A bound acknowledgement requires the designated recipient, exact payload hash and destination, and a single consistent remote-object identity anchored by this observer's acceptance or matching read-back. A bad acknowledgement does not erase a separate valid one or a matching read. Conflicting direct anchors or read identities still make identity uncertain. Sender acknowledgement evidence is not the recipient's direct read-back.
 
-## Time and corrections
+`readback_match` is historical non-withdrawn evidence. `visibility` is the latest actual observed view, with `visibility_as_of`, not a guarantee of persistence now. Simultaneous contradictory observations remain uncertain instead of being resolved by arbitrary IDs.
 
-Timestamps require RFC3339 seconds and an explicit timezone. `observed_at` orders observations; `recorded_at` records when the supplied observation was recorded. Neither is replaced by journal import time. A late-imported older observation does not become newest merely because it arrived last. Different observations at equal instants are retained; contradictory values are not resolved by arbitrary ID ordering.
+Attempt evidence is grouped by `attempt_id` before summarising. Accepted plus blocked for one attempt is contradictory; otherwise acceptance resolves timeout, and explicit block is stronger than timeout alone. The summary follows attempts represented by the latest supplied attempt-observation time. Tied different results remain uncertain. Unrecorded attempt-start times are not reconstructed.
 
-Acknowledgement timing is compared only with consistent acceptance evidence for the same object, never with read-back time. An acknowledgement predating supplied acceptance is conservatively flagged and left unbound. This is a conflict in the supplied timeline, not proof of real-world causality: delayed observation and clock skew may explain it. General clock reconciliation, receipt retraction and a separate authoritative service-event timestamp are not implemented. Preserve the original evidence and investigate rather than inventing a corrected timestamp.
+## Source time and soft ordering notes
 
-Capability observations are scoped to subject, observer, action, context and environment. A past manual success is not evidence of scheduled permission. `recheck_after` makes the present-tense prediction stale; it does not erase the historical record. Reports and inferences remain distinct from direct observations, and `permission_to_act` remains null.
+Timestamps require RFC3339 seconds and an explicit timezone. `observed_at` dates the observation; `recorded_at` dates the record. Neither is journal import time or automatically service creation time. A late import does not make an old observation newest.
 
-## Local persistence and recovery
+Receipts may include the complete optional triplet `source_at`, `source_origin`, and `source_trust`. Trust is one of `authoritative`, `reported`, or `untrusted`. These are recorder assertions, not verified certificates. `source_origin` is an exact opaque, case-sensitive clock-domain string; it is not normalised. An email header is not automatically an authoritative service clock.
 
-A receipt may arrive before its operation. Import preserves it as an orphan; `unresolved` lists it and no known-operation projection is invented. When the operation arrives, evidence is evaluated against its actual contents. Unique IDs are essential: hashless orphan evidence cannot by itself detect an unrelated operation reusing that ID.
+An acknowledgement's source time is compared with consistent acceptance records for that same remote object only when both are declared authoritative and their origins match exactly. Predating the earliest such acceptance raises `ack_before_acceptance` and leaves that acknowledgement unbound. Read-back time never becomes creation time. Equal source times are not a conflict. Weaker or differently sourced acceptances do not override this comparable-clock comparison.
 
-Each import validates the combined state and inserts in one SQLite transaction. On a conflict or interrupted transaction, the entire import is rolled back. An intention exists durably only after a confirmed commit on a retained host. Nothing here saves an abandoned chat runtime automatically.
+Without comparable source evidence, apparent ordering problems produce `ack_observation_order_unverified` or `ack_source_order_unverified` in `notes` and do not reject an otherwise bound acknowledgement. A strong conflict is a contradiction in the supplied timeline, not proof of impossible real-world causality. An early bad acknowledgement can leave a flag while a separate later valid acknowledgement binds. General clock reconciliation and historical knowledge snapshots are not implemented.
 
-Expected SQL guards prevent ordinary update, delete and replacement of records. Older files lacking a guard can still be read/exported; imports refuse to proceed. Recovery is explicit: export privately, initialise a different new path, import, verify, and retain the original until its owner decides otherwise. The current preflight checks trigger names, not their SQL definitions. A different trigger installed under an expected name can pass that presence check; the check does not verify its behaviour. Guard presence is not schema authentication or tamper resistance.
+## Retraction and correction
 
-The `export` command includes payloads. Status output also includes IDs and may itself be sensitive. Keep journals, exports and diagnostic outputs private. `.gitignore` reduces accidents; it is not a privacy boundary or encryption.
+A `retract` receipt requires `retracts` (target receipt ID) and a nonempty `reason`. It carries no operation-evidence fields, including no source-time triplet or expected scope. It is appended; the original is never edited or deleted.
+
+Only the target receipt's own observer can withdraw it. Another observer's retraction is listed as `retraction_reports` and cannot remove direct evidence or clear its warnings. Targets and withdrawals must name the same operation. Missing targets are retained under `unresolved_retractions`; no target is invented. Self-retraction and retraction of a retraction are rejected in either arrival order, excluding cycles and ambiguous resurrection rules. Re-record corrected evidence under a new ID instead.
+
+Current projections stop using same-observer withdrawn receipts and list them in `retracted_receipts`. Withdrawing an identity anchor can unbind a dependent acknowledgement. Withdrawing a scope-mismatched receipt clears its active scope flags and active unresolved entry, while historical `excluded_receipts`, `retracted_receipts` and export preserve it. Foreign-observer withdrawal does not clear those warnings. A withdrawal can itself retain a structural missing-operation reference.
+
+There is no handoff-projection as-of cutoff: these rules apply to the journal currently held, independently of import order. A mistaken withdrawal cannot be undone in place. Capability observations are a separate record type and do not use receipt retraction.
+
+## Expected scope and orphans
+
+Receipts may precede operations. Orphan receipts are retained and exposed by `unresolved` without inventing a known-operation projection. A receipt can declare `expected_action`, `expected_context`, and `expected_destination`, all three or none. A mismatch excludes it from the operation's active evidence and raises `orphan_action_mismatch`, `orphan_context_mismatch`, or `orphan_destination_mismatch`. These names describe scope checking, not import order. `scope_mismatched_receipts` lists active mismatches.
+
+Legacy receipts with neither a content hash nor expected scope remain usable by operation ID but are labelled `unscoped_receipts`; they are not silently rewritten or presented as scoped proof. This includes hashless blocked, timeout and not-found evidence. Same-scope ID reuse still requires globally unique IDs and, where available, content hashes. Expected scope is not authentication.
+
+## Capability observations
+
+Capability is scoped by subject, observer, action, execution context and environment. A manual success does not establish scheduled availability or permission. `recheck_after` makes a prediction stale, not the historical observation false. Direct, reported and inferred observations remain distinct. Capability queries consider both observation and recording cutoff; they are not a full historical snapshot of operation declarations. `permission_to_act` stays null and `automatic_retry` stays false.
+
+## Local persistence and guard checks
+
+Imports validate the combined state, then insert in one SQLite transaction. Conflicting IDs or interrupted transactions roll back the whole import. Every new INSERT must report one affected row, or the transaction is rejected. A saved intention exists durably only after commit on a host retaining the journal; an abandoned chat runtime is not persistent storage.
+
+Preflight compares expected trigger SQL with the exact definitions used at initialisation and lists missing, mismatched and unexpected triggers across the main schema. It runs again after `BEGIN IMMEDIATE`. Additional triggers, including ones on other tables, are refused. Even harmless reformatting of expected definitions is treated conservatively as changed; this is not a SQL-equivalence analyser.
+
+Missing, changed or extra guards allow reading/export but refuse imports. Explicit recovery: export privately, initialise a different path, import, verify, retain the original until its owner decides otherwise. No silent schema alteration. Guard checks and insert counts protect against the tested accidental changes; they do not authenticate a hostile database owner, arbitrary schema changes, storage hardware or the runtime itself.
+
+Inputs are capped at 8 MiB each and 10,000 unique records per collection. Validation reads the whole journal. A cumulative export can exceed the single-file input limit and then needs record-preserving partitioned reimport. The tool is not an unbounded archive. Journals are local and unencrypted. Export includes payloads, and status includes possibly sensitive IDs. Keep all live journals, exports, credentials and correspondence outside the public checkout; `.gitignore` is not a privacy boundary.

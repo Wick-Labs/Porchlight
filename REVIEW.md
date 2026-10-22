@@ -1,64 +1,45 @@
-# Working review: evidence core
+# v0.1 working review
 
-Status: prototype, not released or deployed. `work/evidence-core` and draft PR #1 are the live review surfaces, not a finished-code drop.
+Status: integrated completion candidate on `work/evidence-core`, PR #1. Not yet jointly accepted, merged, packaged or deployed. [The completion contract](docs/COMPLETION.md) is the finish line; not every possible extension belongs in v0.1.
 
-## Reproduce and results
+## Reproduce
 
 ```sh
 python -m unittest discover -s tests -v
+python examples/replay.py
 ```
 
-The integrated review checkpoint passes **88 local tests** on Python 3.13.5 / SQLite 3.46.1 / Linux (22 October 2026). No other runtime or CI result is claimed.
+The current integrated source passes **145 local tests** on Python 3.13.5 / SQLite 3.46.1 / Linux. The synthetic four-handoff replay also passes. No CI, cross-platform or new independent final-review result is claimed here.
 
-Review history:
+## Source and review history
 
-- `1e6e0d348adcfddd41a8b3b16b73e1f89e191636`: first public source and 53 locally passing tests.
-- `e3feb11fec43b01af2f1334c38449529192b50f5`: orphan recovery; 67 locally passing tests including 16 seeded single-record import permutations.
-- Flint independently reported reproducing all 67 tests on e3feb11 and 200 additional shuffled fixture imports without divergent projections. He supplied a review patch with ten new tests, not an unrestricted merge approval.
-- Walpo applied Flint's actual v2 diff, checked its resulting source/test blob hashes, and reproduced seven failures in the unpatched source. All ten review tests passed after the patch.
-- Eleven integration tests added by Walpo cover the interaction of valid and stray acknowledgements, multiple mismatches, distinct attempts, and legacy journal guards. All 88 tests now pass together.
+- `1e6e0d3`: first public implementation, 53 local tests.
+- `e3feb11`: orphan recovery, 67 local tests. Flint reported independently reproducing the suite and 200 shuffled fixture imports.
+- `4b3e0e5`: Flint's actual v2 patch plus Walpo integration follow-ups, 88 local tests. Flint reviewed that exact integration, reported reproducing all 88 and 200 split-import trials, and found no new blockers in his scoped review. That was not blanket correctness or merge approval.
+- `50ddfa8`: documentation-only record of that scoped review; executable bytes unchanged.
+- `d1219f7`: Walpo's source-clock handling and exact guard-definition checks, 105 local tests, independently reproduced and reviewed by Flint. Two earlier Flint timing tests now explicitly supply comparable source-clock evidence for the agreed stronger contract.
+- `e0c1322` on `flint/r2-retraction-scope`: Flint's actual retraction/expected-scope implementation with 24 new tests. His original source and test bytes were retrieved from GitHub and checked against their Git blob hashes before integration. His test module remains separately attributed.
 
-The initial published source/test bytes and the recovery checkpoint were compared with GitHub blob hashes. Subsequent publication is checked the same way. Passing tests establish those tested outcomes, not general correctness or delivery guarantees.
+The combined source has 129 tests before integration follow-ups. Six additional guard tests, five executable roundtrip tests and five retraction/scope follow-ups bring it to 145.
 
-## Independent integration review — 22 October 2026
+## Concrete findings incorporated
 
-Flint subsequently reviewed the exact integrated commit `4b3e0e5cbca4f770c8f102b2185d2b274ce92b7a` from a fresh checkout and **reported all 88 tests passing**. His scoped review covered valid-plus-stray acknowledgements, simultaneous acceptance mismatches, recovered timeouts, acknowledgement timing, legacy-journal read/export and recovery, replacement guards, F1–F6b fixtures, and preservation of his ten regression tests. He also reported 200 seeded split-import permutations with no rejected imports or divergent projections. He found no new blockers in those areas; this is his independent report, not a blanket correctness claim or merge approval.
+Flint supplied a swallowed-insert counterexample: an extra `RAISE(IGNORE)` trigger made the older importer report an insertion that never persisted. Walpo reproduced that result, then added unexpected-trigger rejection and a per-INSERT rowcount check. Checks run before and under the write transaction lock. A separate injected second-insert failure verifies rollback after an actual partial transaction, not merely preflight refusal.
 
-Two remaining notes are explicit in the evidence contract: an acceptance reports the service-level attempt outcome, not verified fulfilment of the intended operation; and guard preflight checks names rather than SQL definitions. Stronger definition checking is deferred, not claimed as implemented.
+Walpo found a correction interaction in the r2 integration: withdrawing wrong-scope evidence removed its active result but left active scope warnings. Flint agreed that withdrawal should clear active warnings while preserving historical excluded/withdrawn IDs. Three new cases failed before the fix; all five integration cases now pass, including foreign-observer isolation and arrival-order permutations.
 
-This follow-up changes documentation only. Executable source and tests remain at the reviewed `4b3e0e5` content. No fresh local test run or CI result is claimed for the documentation-only update. The pull request remains draft and unmerged.
+Earlier regression coverage remains: contradictory acceptance cannot anchor an acknowledgement; bad acknowledgements cannot erase a separate valid one; recovered acceptance resolves its own timeout; orphan receipts persist; canonical duplicate imports are idempotent; conflicts roll back; retraction preserves originals and does not erase another observer's evidence.
 
-## Review findings incorporated
+## Contributions and review gate
 
-Flint's patch:
+Flint contributed adversarial fixtures, journal design, independent code reviews, the ten-test first patch, the 24-test retraction/scope patch, and the extra-trigger counterexample. Walpo implemented the core, orphan recovery, time/guard work, integration fixes and runnable public replay. Retraction-warning semantics and the v0.1 completion contract were agreed together.
 
-- Acceptance evidence contradicting the intended payload or destination cannot anchor an acknowledgement.
-- A stray acknowledgement for a copy or container does not undo the observer's own matching read-back.
-- Attempt outcomes are resolved from the evidence for that attempt, so a late-recovered acceptance can resolve a timeout. Contradictory accepted/blocked evidence remains uncertain.
-- An acknowledgement earlier than the supplied consistent acceptance timestamp is flagged and left unbound. An acknowledgement before a later read-back remains valid; read-back time is not creation time.
-- A BEFORE INSERT guard rejects replacement of an existing record, including SQL `REPLACE`.
+Each result must be labelled locally executed, independently reported, proposed or pending. Passing tests and scope agreement do not substitute for both contributors explicitly accepting the final candidate. Source bytes and published tree/blob hashes are checked before publication claims. The final integrated review is pending at this checkpoint.
 
-Walpo's integration follow-ups:
+## Deliberate limits
 
-- A separate bad acknowledgement does not suppress an otherwise valid bound acknowledgement.
-- Both content and destination contradictions are surfaced when both occur.
-- Older journals missing expected guards remain readable/exportable but refuse new writes. There is no silent schema upgrade or deletion. Export to a private file, initialise a different journal path, and import to recover with the new guards.
+No network clients, senders, retries, schedulers, model runner, credentials, deployment or permission changes. No cryptographic identity/authentication, object aliases, arbitrary SQL-equivalence checking, automatic schema migration or full historical handoff queries. Capability records and receipt retractions are separate models. Source-clock trust and observer labels are recorder assertions.
 
-The guard follows SQLite's documented distinction: REPLACE can delete conflicting rows without firing delete triggers unless recursive triggers are enabled. See the [official ON CONFLICT documentation](https://www.sqlite.org/lang_conflict.html). The additional insert guard protects ordinary accidental replacement; it does not make the database tamper-proof.
+The journal is bounded, local and unencrypted; durability depends on its host. Input files are capped at 8 MiB and collections at 10,000 records; cumulative exports above the single-input bound need record-preserving partitioned reimport. Full-journal validation is not intended as a large-scale archive. Guard checks do not make a hostile owner's database tamper-proof.
 
-## Open design questions
-
-- **Time semantics:** `observed_at` and `recorded_at` must not be conflated with import time. Delayed observation and different clocks can explain a temporal conflict. The conservative acknowledgement flag is not proof of impossible delivery. A future schema may need separate service-event and observation times.
-- **Orphan identity:** operation IDs must be globally unique within the journal's record type. Use producer-namespaced opaque IDs. A hashless orphan cannot detect a malicious or accidental collision with a later operation of the same ID; richer scope binding remains open.
-- **Historical queries:** capability supports a supplied cutoff; handoff projection uses the evidence currently in the journal. It is not a complete historical knowledge snapshot. Operation declarations and supersession links currently lack a comparable knowledge-time model.
-- **Scale:** there is an explicit limit of 10,000 unique records per collection. Exact retries at capacity work; new records beyond capacity fail without altering history. This bounded O(N)-validation prototype is not a scalable archive.
-
-## Contribution route
-
-Review the source, tests and [evidence contract](docs/EVIDENCE.md) at an exact commit. Supply expected behaviour and a minimal synthetic counterexample or patch. Contributors without write access can send patches through the agreed collaboration channel; integration preserves attribution and re-runs tests. Do not post private conversations or live service identifiers in public issues or patches.
-
-Flint contributed adversarial scenarios, journal design review, independently executed checks and the ten-test v2 patch. Walpo implemented the core, orphan recovery and integration follow-ups. Findings and interpretations remain open to challenge.
-
-## Limits
-
-No network clients, sends, retries, scheduling, credentials or permission changes. Input is trusted-recorder testimony, not authenticated truth. SQLite guards do not prevent a database owner altering the schema. Local durability depends on the host and filesystem retaining the journal. Journals are unencrypted; exports contain payloads and stay outside the public checkout. General receipt retraction, cryptographic provenance, schema migration, object aliases and external adapters are not implemented. No compatibility promise, package release, deployment or licence grant has been made.
+Real bench receipts remain private. Only synthetic examples and redacted engineering results belong in the public repository. No licence has been selected. No scheduled automation has been restarted.

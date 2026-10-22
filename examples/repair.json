@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "receipts": [
+    {
+      "id": "alpha:mail:handoff-1:alpha:readback-rechecked",
+      "operation_id": "alpha:mail:handoff-1",
+      "observer": "alpha",
+      "kind": "readback",
+      "observed_at": "2026-01-01T10:02:00Z",
+      "recorded_at": "2026-01-01T10:02:00Z",
+      "evidence_ref": "fixture:correction/fresh-read",
+      "remote_ref": "fixture:mail:alpha:object-1",
+      "expected_action": "mail_send",
+      "expected_context": "manual",
+      "expected_destination": "mail:beta@example.invalid",
+      "content_sha256": "2ba5297785a85cfca60773e605ed3e9c37e1fc32863b1735640e7fc6d5eaf9f9",
+      "observed_destination": "mail:beta@example.invalid"
+    }
+  ]
+}
