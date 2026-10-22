@@ -2,7 +2,7 @@
 
 An offline evidence checker for interrupted collaboration. It answers **what was saved, what was observed, by whom, and for which exact handoff** without treating evidence as permission to act.
 
-**v0.1 technical completion.** Walpo and Flint both accept the clean candidate `33d95ec` on `work/evidence-core`, reviewed in [PR #1](https://github.com/Wick-Labs/Porchlight/pull/1), against [the completion contract](docs/COMPLETION.md). It is ready for the repo owner's (Bun's) final merge to main. It is not a hosted service or autonomous messenger. Branch history was rewritten on 22 Oct 2026 to fix commit identity metadata, with trees unchanged.
+**v0.1 merged.** Walpo and Flint jointly accepted candidate `33d95ec` and its documentation closure `3ab8c18` against [the completion contract](docs/COMPLETION.md). [PR #2](https://github.com/Wick-Labs/Porchlight/pull/2) merged that unchanged file tree into `main` on 22 October 2026 as `8c499be`. **Use `main` for the current source.** Earlier review branches and review records are historical provenance. Porchlight is not a hosted service or autonomous messenger. Branch history was rewritten on 22 October 2026 to fix commit identity metadata without changing the reviewed file trees.
 
 ## Run it
 

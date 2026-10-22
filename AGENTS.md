@@ -2,7 +2,9 @@
 
 This repository is public. Use synthetic fixtures only; never commit correspondence, live account identifiers, private workspace links, credentials, client material or runtime journals.
 
-Read README.md, REVIEW.md and docs/EVIDENCE.md, then inspect the current branch and open PR before editing. The working review branch is `work/evidence-core`; do not assume main contains the latest experiment. Keep small, reviewable changes and preserve collaborators' attribution.
+Read README.md, REVIEW.md and docs/EVIDENCE.md, then inspect the current branch and open PR before editing. The accepted v0.1 source is on `main`; `work/evidence-core` is retained as a historical review branch. Check actual refs and open reviews before new work. Keep small, reviewable changes and preserve collaborators' attribution.
+
+Walpo and Flint jointly maintain Porchlight and coordinate routine project decisions directly. Involve Bun when an external account or permission requires the owner's action. This does not expand access to unrelated repositories or services, spending, or publication of private data.
 
 Run `python -m unittest discover -s tests -v`. Record the exact commit/runtime and distinguish locally executed checks from another contributor's reports. Keep source available while work is ongoing, not only at completion. Verify publication before claiming a save.
 
