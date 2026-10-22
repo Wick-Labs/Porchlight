@@ -122,8 +122,10 @@ class RetractionScopeIntegrationTests(unittest.TestCase):
     def test_withdrawn_orphan_no_longer_appears_as_active_receipt(self):
         data = dataset(operations=[], receipts=self.rows())
         unresolved = p.unresolved(data)
-        # The withdrawal still has a structural reference to the missing operation.
-        self.assertEqual([r['receipt_id'] for r in unresolved['orphan_receipts']], ['withdraw'])
+        # Changed with the held-retraction fix: the owner's effective withdrawal of
+        # its own orphan settles both records, so neither is left dangling. A foreign
+        # or not-yet-matched withdrawal is still listed (see test_held_retraction.py).
+        self.assertEqual(unresolved['orphan_receipts'], [])
         self.assertEqual(unresolved['unresolved_retractions'], [])
 
     def test_scope_withdrawal_is_independent_of_arrival_order(self):

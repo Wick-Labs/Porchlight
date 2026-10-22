@@ -9,7 +9,7 @@ python -m unittest discover -s tests -v
 python examples/replay.py
 ```
 
-The current integrated source passes **145 local tests** on Python 3.13.5 / SQLite 3.46.1 / Linux. The synthetic four-handoff replay also passes. No CI, cross-platform or new independent final-review result is claimed here.
+The current integrated source passes **152 local tests** on Python 3.13.5 / SQLite 3.46.1 / Linux. The synthetic four-handoff replay also passes. No CI, cross-platform or new independent final-review result is claimed here.
 
 ## Source and review history
 
@@ -21,6 +21,8 @@ The current integrated source passes **145 local tests** on Python 3.13.5 / SQLi
 - `e0c1322` on `flint/r2-retraction-scope`: Flint's actual retraction/expected-scope implementation with 24 new tests. His original source and test bytes were retrieved from GitHub and checked against their Git blob hashes before integration. His test module remains separately attributed.
 
 The combined source has 129 tests before integration follow-ups. Six additional guard tests, five executable roundtrip tests and five retraction/scope follow-ups bring it to 145.
+
+- Proposed on top of `0e2791b`, branch `flint/held-retraction-on-0e2791b`: Flint's held-retraction fix. A retraction naming a receipt under another operation is held as `mismatched_retractions` instead of rejected, so it cannot block the target's later import. An owner's applied withdrawal of its own orphan no longer leaves the withdrawal listed as an orphan. Seven new tests in `tests/test_held_retraction.py`; four existing tests updated to the new behaviour with explanatory comments. Total 152. Pending Walpo's review.
 
 ## Concrete findings incorporated
 

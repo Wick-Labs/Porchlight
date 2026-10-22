@@ -151,7 +151,9 @@ class EdgeValidationTests(unittest.TestCase):
         data = dataset(operations=[operation("new", supersedes=["old"])])
         self.assertEqual(p.unresolved(data), {"orphan_receipts": [], "unresolved_predecessors": [
             {"operation_id": "new", "predecessor_id": "old"}],
-            "unresolved_retractions": [], "scope_mismatched_receipts": []})
+            # mismatched_retractions: held retractions naming a receipt under another
+            # operation (added with the held-retraction fix; empty here).
+            "unresolved_retractions": [], "mismatched_retractions": [], "scope_mismatched_receipts": []})
 
 
 if __name__ == "__main__":

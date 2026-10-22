@@ -180,18 +180,25 @@ def validate(data: Any) -> dict[str, Any]:
     receipts = {r["id"]: r for r in result["receipts"]}
     for r in receipts.values():
         target = receipts.get(r.get("retracts", ""))
-        if target is not None and target["operation_id"] != r["operation_id"]:
-            raise Invalid("a retraction cannot cross operations")
         if target is not None and target["kind"] == "retract":
             raise Invalid("a retraction cannot be retracted")
     return result
 
 
+def _effective_retractions(receipts: list[dict[str, Any]]) -> dict[str, str]:
+    """Retraction ID -> withdrawn receipt ID, for retractions by the target's own
+    observer under the target's own operation. A retraction naming a receipt
+    under another operation is held (see unresolved), never applied or rejected,
+    so the outcome does not depend on which record arrives first."""
+    by_id = {r["id"]: r for r in receipts}
+    return {r["id"]: r["retracts"] for r in receipts if r["kind"] == "retract"
+            and r["retracts"] in by_id and by_id[r["retracts"]]["observer"] == r["observer"]
+            and by_id[r["retracts"]]["operation_id"] == r["operation_id"]}
+
+
 def _withdrawn(receipts: list[dict[str, Any]]) -> set[str]:
     """IDs withdrawn by a retraction from the receipt's own observer."""
-    by_id = {r["id"]: r for r in receipts}
-    return {r["retracts"] for r in receipts if r["kind"] == "retract"
-            and r["retracts"] in by_id and by_id[r["retracts"]]["observer"] == r["observer"]}
+    return set(_effective_retractions(receipts).values())
 
 
 def _scope_mismatch(receipt: dict[str, Any], op: dict[str, Any]) -> list[str]:
@@ -207,11 +214,16 @@ def unresolved(data: dict[str, Any]) -> dict[str, Any]:
     operations = {op["id"]: op for op in data["operations"]}
     known = operations.keys()
     receipt_ids = {r["id"] for r in data["receipts"]}
-    withdrawn = _withdrawn(data["receipts"])
+    by_id = {r["id"]: r for r in data["receipts"]}
+    effective = _effective_retractions(data["receipts"])
+    withdrawn = set(effective.values())
     return {
+        # A withdrawn orphan and the owner's own withdrawal of it are both settled;
+        # neither is left dangling. Foreign or held retractions still show.
         "orphan_receipts": [
             {"receipt_id": r["id"], "operation_id": r["operation_id"], "observer": r["observer"]}
-            for r in data["receipts"] if r["operation_id"] not in known and r["id"] not in withdrawn
+            for r in data["receipts"] if r["operation_id"] not in known
+            and r["id"] not in withdrawn and r["id"] not in effective
         ],
         "unresolved_predecessors": [
             {"operation_id": op["id"], "predecessor_id": old}
@@ -220,6 +232,14 @@ def unresolved(data: dict[str, Any]) -> dict[str, Any]:
         "unresolved_retractions": [
             {"receipt_id": r["id"], "retracts": r["retracts"], "observer": r["observer"]}
             for r in data["receipts"] if r["kind"] == "retract" and r["retracts"] not in receipt_ids
+        ],
+        # Held, not rejected: rejecting would let a mistaken or foreign retraction
+        # that arrives first block the target receipt's later import forever.
+        # A held retraction withdraws nothing.
+        "mismatched_retractions": [
+            {"receipt_id": r["id"], "retracts": r["retracts"], "observer": r["observer"]}
+            for r in data["receipts"] if r["kind"] == "retract" and r["retracts"] in by_id
+            and by_id[r["retracts"]]["operation_id"] != r["operation_id"]
         ],
         # Held like orphans: the operation that arrived under this ID is not the
         # one the receipt expected, so the receipt is not bound to it.

@@ -5,14 +5,14 @@ Agreed by Walpo and Flint on 22 October 2026. Completion means a usable offline 
 | Item | Acceptance condition | Current result |
 | --- | --- | --- |
 | Source time | Source time, origin and declared trust separate from observation; only comparable authoritative clocks give strong ordering conflicts | Implemented, locally tested; intermediate independently reviewed |
-| Retraction | Append-only, observer-scoped withdrawal; retained originals; missing targets explicit; no retraction of retraction | Flint implementation integrated; active-warning semantics agreed and tested |
+| Retraction | Append-only, observer-scoped withdrawal; retained originals; missing targets explicit; no retraction of retraction | Flint implementation integrated; active-warning semantics agreed and tested; held-retraction fix proposed, pending review |
 | Guards | Verify expected SQL and reject missing, changed or unexpected triggers before and inside transaction; verify INSERT result | Implemented; Flint's swallowed-write counterexample reproduced and covered |
 | Orphan scope | Expected action/context/destination; out-of-scope evidence excluded; legacy unscoped records labelled | Flint implementation integrated and tested |
 | Live bench | Four harmless real handoffs; actual per-observer receipts; deduplication and reopened-journal replay | Exchanges and acknowledgements observed; complete private replay pending |
 | Usability | Runnable synthetic CLI replay, documentation, review record and explicit limits | Implemented and locally tested; final review pending |
 | Mutual acceptance | Both contributors review and explicitly accept the same final candidate | Pending; no completion claim |
 
-The current integrated checkpoint has **145 locally passing tests** on Python 3.13.5 / SQLite 3.46.1 / Linux, plus a successful synthetic replay. Test count alone is not completion or independent approval.
+The current integrated checkpoint has **152 locally passing tests** (145 on `0e2791b`, plus the proposed held-retraction fix) on Python 3.13.5 / SQLite 3.46.1 / Linux, plus a successful synthetic replay. Test count alone is not completion or independent approval.
 
 Source and tests live in GitHub. Notion and email hold discussion and private live receipts, not a competing source tree. Intermediate branches are reviewable; earlier reviews apply to their named commits only.
 

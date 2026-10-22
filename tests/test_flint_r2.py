@@ -126,7 +126,9 @@ class RetractionTests(unittest.TestCase):
             "cycle": [retract("x", "y"), retract("y", "x")],
             "long cycle": [retract("x", "y"), retract("y", "z"), retract("z", "x")],
             "retraction of retraction": [receipt("r", "readback"), retract("x", "r"), retract("y", "x")],
-            "cross operation": [receipt("r", "readback", operation("op-2")), retract("x", "r")],
+            # "cross operation" is no longer rejected: rejecting it let a retraction that
+            # arrived first block its target's later import forever. It is now held;
+            # see test_held_retraction.py.
             "no reason": [{k: v for k, v in retract("x", "r").items() if k != "reason"}],
             "blank reason": [retract("x", "r", reason=" ")],
             "no target": [{k: v for k, v in retract("x", "r").items() if k != "retracts"}],
@@ -139,12 +141,19 @@ class RetractionTests(unittest.TestCase):
             with self.subTest(name), self.assertRaises(p.Invalid):
                 p.validate(dataset(operations=[operation(), operation("op-2")], receipts=rows))
 
-    def test_cross_operation_target_arriving_later_rolls_back(self):
+    def test_cross_operation_target_arriving_later_is_imported_and_retraction_held(self):
+        # Previously this import was rejected, so the real receipt could never be
+        # stored once a mismatched retraction had arrived first (append-only journal).
+        # Now the receipt imports and the retraction is held, withdrawing nothing.
         p.import_data(self.db, dataset(operations=[operation(), operation("op-2")], receipts=[retract("x", "r")]))
-        before = p.read_data(self.db)
-        with self.assertRaises(p.Invalid):
-            p.import_data(self.db, dataset(receipts=[receipt("r", "readback", operation("op-2"))]))
-        self.assertEqual(p.read_data(self.db), before)
+        result = p.import_data(self.db, dataset(receipts=[receipt("r", "readback", operation("op-2"))]))
+        self.assertEqual(result["inserted"], 1)
+        data = p.read_data(self.db)
+        self.assertEqual(p.unresolved(data)["mismatched_retractions"],
+                         [{"receipt_id": "x", "retracts": "r", "observer": "alpha"}])
+        state = p.project(data, "op-2", "alpha")
+        self.assertTrue(state["readback_match"])
+        self.assertEqual(state["retracted_receipts"], [])
 
     def test_seeded_single_record_import_permutations_are_identical(self):
         rows = [receipt("a", "accepted"), receipt("r", "readback", time=T1), receipt("k", "ack_received", time=T2),
