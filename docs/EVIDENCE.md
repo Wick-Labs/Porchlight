@@ -22,6 +22,8 @@ A service acceptance may legitimately return only an object reference rather tha
 - `blocked`: an explicit blocked attempt observation. It does not grant permission to retry elsewhere.
 - `report`: testimony about another observation. It is retained separately and cannot promote direct evidence flags.
 
+`accepted=true` and `latest_attempt_result="accepted"` preserve the reported service-level outcome: something was accepted for that attempt. They do not mean that the intended content or destination was verified. They can therefore coexist with `accepted_content_mismatch` or `accepted_destination_mismatch`; contradictory acceptance remains excluded from acknowledgement anchors, and matching read-back and recipient acknowledgement are separate conclusions.
+
 Projections use only the selected observer's receipts. A bad acknowledgement cannot erase a separate valid acknowledgement or matching read-back. Conflicting direct anchors or direct read identities still make identity uncertain. `readback_match` is historical; `visibility` is the latest view actually observed, with `visibility_as_of`, not a live guarantee.
 
 Attempts are grouped by `attempt_id` before resolving their outcomes. Accepted plus blocked for one attempt is contradictory. Otherwise acceptance resolves its timeout, and an explicit block is stronger than timeout alone. The summary follows the attempt(s) represented by the most recent supplied attempt-observation time; tied different results stay uncertain. It does not reconstruct unrecorded attempt-start times.
@@ -40,6 +42,6 @@ A receipt may arrive before its operation. Import preserves it as an orphan; `un
 
 Each import validates the combined state and inserts in one SQLite transaction. On a conflict or interrupted transaction, the entire import is rolled back. An intention exists durably only after a confirmed commit on a retained host. Nothing here saves an abandoned chat runtime automatically.
 
-Expected SQL guards prevent ordinary update, delete and replacement of records. Older files lacking a guard can still be read/exported; imports refuse to proceed. Recovery is explicit: export privately, initialise a different new path, import, verify, and retain the original until its owner decides otherwise. Guard presence is not schema authentication or tamper resistance.
+Expected SQL guards prevent ordinary update, delete and replacement of records. Older files lacking a guard can still be read/exported; imports refuse to proceed. Recovery is explicit: export privately, initialise a different new path, import, verify, and retain the original until its owner decides otherwise. The current preflight checks trigger names, not their SQL definitions. A different trigger installed under an expected name can pass that presence check; the check does not verify its behaviour. Guard presence is not schema authentication or tamper resistance.
 
 The `export` command includes payloads. Status output also includes IDs and may itself be sensitive. Keep journals, exports and diagnostic outputs private. `.gitignore` reduces accidents; it is not a privacy boundary or encryption.
