@@ -268,7 +268,6 @@ class ValidationTests(unittest.TestCase):
         variants = [dataset(receipts=[receipt("r", "invented")]), dataset(receipts=[receipt("r", "readback", content_sha256="fake")]),
                     dataset(receipts=[receipt("r", "readback", observed_at="2026-01-01")]),
                     {"schema_version": True}, {"schema_version": 1, "surprise": []}, dataset(operations=[operation(payload=42)]),
-                    dataset(receipts=[receipt("r", "readback", operation_id="missing")]),
                     dataset(observations=[observation(recheck_after="2025-01-01T00:00:00Z")])]
         for value in variants:
             with self.subTest(value=value), self.assertRaises(p.Invalid):

@@ -24,7 +24,7 @@ MAX_RECORDS = 10000
 KINDS = {"accepted", "readback", "not_found", "timeout", "blocked", "ack_received", "report"}
 SCOPE = ("author", "recipient", "action", "context", "destination")
 TABLES = ("operations", "receipts", "observations")
-RFC3339 = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})\Z")
+RFC3339 = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 
 
@@ -37,7 +37,7 @@ def stamp(value: str) -> datetime:
         raise Invalid("timestamps must be RFC3339 with seconds and an explicit timezone")
     try:
         return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
-    except ValueError as exc:
+    except (ValueError, OverflowError) as exc:
         raise Invalid("invalid timestamp") from exc
 
 
@@ -69,8 +69,10 @@ def _fields(record: Any, required: set[str], optional: set[str]) -> None:
         raise Invalid("missing or unsupported record fields")
     for key, value in record.items():
         if key == "supersedes":
-            if not isinstance(value, list) or any(not isinstance(x, str) or not x for x in value):
-                raise Invalid("supersedes must be a list of IDs")
+            if not isinstance(value, list) or len(value) > MAX_RECORDS:
+                raise Invalid("supersedes must be a bounded list of IDs")
+            for target in value:
+                _text(target, "supersedes ID")
             if len(value) != len(set(value)):
                 raise Invalid("duplicate supersession edge")
         else:
@@ -88,7 +90,10 @@ def validate(data: Any) -> dict[str, Any]:
     result: dict[str, Any] = {"schema_version": 1}
     for table in TABLES:
         records = data.get(table, [])
-        if not isinstance(records, list) or len(records) > MAX_RECORDS:
+        # A merge can contain a full journal plus a full retry batch. Limit
+        # unique records below, after exact-ID deduplication, so a retry at the
+        # journal's capacity is still idempotent.
+        if not isinstance(records, list) or len(records) > 2 * MAX_RECORDS:
             raise Invalid("record collections must be bounded arrays")
         unique: dict[str, dict[str, Any]] = {}
         for record in records:
@@ -118,11 +123,12 @@ def validate(data: Any) -> dict[str, Any]:
             if rid in unique and canonical(unique[rid]) != canonical(record):
                 raise Invalid(f"conflicting ID in {table}")
             unique[rid] = dict(record)
-        result[table] = list(unique.values())
+            if len(unique) > MAX_RECORDS:
+                raise Invalid("unique record limit exceeded")
+        result[table] = sorted(unique.values(), key=lambda r: r["id"])
     operations = {op["id"]: op for op in result["operations"]}
-    for receipt in result["receipts"]:
-        if receipt["operation_id"] not in operations:
-            raise Invalid("receipt refers to an unknown operation")
+    # A receipt may precede its operation. Preserve it without projecting it
+    # as a known handoff; unresolved() exposes it until the operation arrives.
     # Dangling predecessor links are retained: a newer version may arrive first.
     # Validate their scope if/when the predecessor is later imported.
     for op in operations.values():
@@ -147,6 +153,22 @@ def validate(data: Any) -> dict[str, Any]:
     if visited != len(operations):
         raise Invalid("supersession cycle")
     return result
+
+
+def unresolved(data: dict[str, Any]) -> dict[str, Any]:
+    """Expose dangling evidence without inventing the missing operation."""
+    data = validate(data)
+    known = {op["id"] for op in data["operations"]}
+    return {
+        "orphan_receipts": [
+            {"receipt_id": r["id"], "operation_id": r["operation_id"], "observer": r["observer"]}
+            for r in data["receipts"] if r["operation_id"] not in known
+        ],
+        "unresolved_predecessors": [
+            {"operation_id": op["id"], "predecessor_id": old}
+            for op in data["operations"] for old in sorted(op.get("supersedes", [])) if old not in known
+        ],
+    }
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -288,8 +310,9 @@ def capability(data: dict[str, Any], *, subject: str, observer: str, action: str
     data = validate(data)
     cutoff = stamp(at)
     selection = {"subject": subject, "observer": observer, "action": action, "context": context, "environment": environment}
-    rows = [r for r in data["observations"] if all(r[key] == value for key, value in selection.items())
-            and stamp(r["observed_at"]) <= cutoff and stamp(r["recorded_at"]) <= cutoff]
+    rows = sorted((r for r in data["observations"] if all(r[key] == value for key, value in selection.items())
+                   and stamp(r["observed_at"]) <= cutoff and stamp(r["recorded_at"]) <= cutoff),
+                  key=lambda r: (stamp(r["observed_at"]), r["id"]))
     latest = _latest([r for r in rows if r["basis"] == "direct"])
     outcomes = {r["outcome"] for r in latest}
     outcome = next(iter(outcomes)) if len(outcomes) == 1 else "unknown"
@@ -321,15 +344,17 @@ def initialize(path: Path) -> None:
     # Never truncate or accidentally initialise an unrelated database.
     descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     os.close(descriptor)
+    connection = sqlite3.connect(path)
     try:
-        with sqlite3.connect(path) as connection:
+        with connection:
             connection.execute("PRAGMA synchronous=EXTRA")
             connection.executescript(SCHEMA)
             connection.execute(f"PRAGMA application_id={APPLICATION_ID}")
             connection.execute("PRAGMA user_version=1")
-    except BaseException:
-        # Retain a failed file for inspection; never delete an existing user's data.
-        raise
+    finally:
+        # The transaction context does not close a sqlite3 connection. Close
+        # explicitly, also on failure; retain a failed file for inspection.
+        connection.close()
 
 
 @contextmanager
@@ -396,7 +421,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", action="version", version=VERSION)
     sub = parser.add_subparsers(dest="command", required=True)
-    for command in ("init", "import", "status", "capability", "export", "check"):
+    for command in ("init", "import", "status", "capability", "export", "check", "unresolved"):
         child = sub.add_parser(command)
         child.add_argument("--db", type=Path, required=True)
         if command == "import":
@@ -421,6 +446,8 @@ def main(argv: list[str] | None = None) -> int:
             elif args.command == "capability":
                 result = capability(data, **{key: getattr(args, key) for key in
                     ("subject", "observer", "action", "context", "environment", "at")})
+            elif args.command == "unresolved":
+                result = unresolved(data)
             elif args.command == "export":
                 result = data  # Explicit command: includes payloads; keep this output private.
             else:
@@ -428,7 +455,8 @@ def main(argv: list[str] | None = None) -> int:
                     checks = [row[0] for row in connection.execute("PRAGMA integrity_check")]
                 if checks != ["ok"]:
                     raise Invalid("SQLite integrity check failed")
-                result = {"integrity": "ok", "records": {key: len(data[key]) for key in TABLES}}
+                result = {"integrity": "ok", "records": {key: len(data[key]) for key in TABLES},
+                          **unresolved(data)}
         print(json.dumps(result, indent=2, ensure_ascii=True, allow_nan=False))
         return 0
     except (Invalid, OSError, sqlite3.Error, ValueError) as exc:
