@@ -12,7 +12,7 @@ Payload SHA-256 is over exact UTF-8 bytes. There is no silent whitespace or Unic
 
 ## Receipt evidence and observer isolation
 
-Every receipt names `id`, `operation_id`, `observer`, `kind`, `observed_at`, `recorded_at`, and `evidence_ref`.
+Every receipt names `id`, `operation_id`, `observer`, `kind`, `observed_at`, `recorded_at`, `evidence_ref`.
 
 - `accepted`: recorded service acceptance of an attempt. It needs `attempt_id`; object identity may be returned without echoed content or destination.
 - `readback`: the observer records the exact remote object, payload hash and destination returned by a read. An incomplete read cannot verify the intended payload.
@@ -47,7 +47,11 @@ Without comparable source evidence, apparent ordering problems produce `ack_obse
 
 A `retract` receipt requires `retracts` (target receipt ID) and a nonempty `reason`. It carries no operation-evidence fields, including no source-time triplet or expected scope. It is appended; the original is never edited or deleted.
 
-Only the target receipt's own observer can withdraw it. Another observer's retraction is listed as `retraction_reports` and cannot remove direct evidence or clear its warnings. Targets and withdrawals must name the same operation. Missing targets are retained under `unresolved_retractions`; no target is invented. Self-retraction and retraction of a retraction are rejected in either arrival order, excluding cycles and ambiguous resurrection rules. Re-record corrected evidence under a new ID instead.
+A withdrawal has an effect only when its target is a non-withdrawal receipt for the same operation and observer. Another observer cannot remove direct evidence or clear its warnings. Missing targets are retained under `unresolved_retractions`; no target is invented.
+
+Intrinsic faults, including self-retraction, missing/blank reasons and prohibited evidence fields, reject the input. Relationship defects that depend on another record are instead retained but inert: a different-operation target produces `operation_mismatch`, and a target that is itself a withdrawal produces `target_is_retraction`. `unresolved` exposes these records under `invalid_retractions`, with receipt ID, target ID, observer and deterministic reason list. Both reasons can apply. An early invalid relationship cannot prevent a later legitimate receipt or correction from being imported. Withdrawal cycles are inert, not resurrection rules. Re-record corrected evidence under a new ID instead.
+
+`retraction_reports` preserves cross-observer testimony naming one of the selected observer's receipts in the same operation. It does not assert that the relationship is valid or effective. An inert foreign reference to a withdrawal can appear both in this report list and in `invalid_retractions`; it still removes nothing. Reports are not an action queue. The journal-wide diagnostics, together with `retracted_receipts`, distinguish ineffective relationships from actual withdrawals.
 
 Current projections stop using same-observer withdrawn receipts and list them in `retracted_receipts`. Withdrawing an identity anchor can unbind a dependent acknowledgement. Withdrawing a scope-mismatched receipt clears its active scope flags and active unresolved entry, while historical `excluded_receipts`, `retracted_receipts` and export preserve it. Foreign-observer withdrawal does not clear those warnings. A withdrawal can itself retain a structural missing-operation reference.
 
