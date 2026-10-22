@@ -21,6 +21,7 @@ A service acceptance may legitimately return only an object reference rather tha
 - `timeout`: an uncertain attempt outcome, not proof of failure. Later acceptance for the same attempt can resolve it without an automatic resend.
 - `blocked`: an explicit blocked attempt observation. It does not grant permission to retry elsewhere.
 - `report`: testimony about another observation. It is retained separately and cannot promote direct evidence flags.
+- `retract`: the observer withdraws one earlier receipt, named by `retracts`, with a `reason`. It carries no evidence fields of its own. See "Retraction" below.
 
 `accepted=true` and `latest_attempt_result="accepted"` preserve the reported service-level outcome: something was accepted for that attempt. They do not mean that the intended content or destination was verified. They can therefore coexist with `accepted_content_mismatch` or `accepted_destination_mismatch`; contradictory acceptance remains excluded from acknowledgement anchors, and matching read-back and recipient acknowledgement are separate conclusions.
 
@@ -32,13 +33,23 @@ Attempts are grouped by `attempt_id` before resolving their outcomes. Accepted p
 
 Timestamps require RFC3339 seconds and an explicit timezone. `observed_at` orders observations; `recorded_at` records when the supplied observation was recorded. Neither is replaced by journal import time. A late-imported older observation does not become newest merely because it arrived last. Different observations at equal instants are retained; contradictory values are not resolved by arbitrary ID ordering.
 
-Acknowledgement timing is compared only with consistent acceptance evidence for the same object, never with read-back time. An acknowledgement predating supplied acceptance is conservatively flagged and left unbound. This is a conflict in the supplied timeline, not proof of real-world causality: delayed observation and clock skew may explain it. General clock reconciliation, receipt retraction and a separate authoritative service-event timestamp are not implemented. Preserve the original evidence and investigate rather than inventing a corrected timestamp.
+Acknowledgement timing is compared only with consistent acceptance evidence for the same object, never with read-back time. An acknowledgement predating supplied acceptance is conservatively flagged and left unbound. This is a conflict in the supplied timeline, not proof of real-world causality: delayed observation and clock skew may explain it. General clock reconciliation and a separate authoritative service-event timestamp are not implemented. Preserve the original evidence and investigate rather than inventing a corrected timestamp.
+
+### Retraction
+
+A recorder that finds a receipt was wrong appends a `retract` receipt for the same operation; nothing is edited or deleted. The original stays in the journal and in `export`. Projections stop using it and list it in `retracted_receipts`. Projection has no as-of cutoff: it describes the journal as currently held, so a retraction applies to every projection made after it is imported, whatever order records arrived in.
+
+- Only the receipt's own observer can withdraw it. A retraction by another observer is testimony: it appears in the target observer's `retraction_reports` and never removes direct evidence.
+- Retracting a retraction is not supported in v0.1; the journal rejects it whichever arrives first. There are no resurrection rules: a mistaken retraction stays visible, and the evidence can be re-recorded as a new receipt. This also rules out retraction loops.
+- A retraction naming a receipt that is not in the journal is held, like an orphan, and listed in `unresolved_retractions`. No target is invented. It applies when that receipt arrives.
+- A receipt cannot retract itself, and a retraction and its target must name the same operation. Repeating a retraction is harmless.
+- Withdrawing an anchor can unbind an acknowledgement that depended on it. That is intended: the acknowledgement is retained, but nothing direct now ties it to the object.
 
 Capability observations are scoped to subject, observer, action, context and environment. A past manual success is not evidence of scheduled permission. `recheck_after` makes the present-tense prediction stale; it does not erase the historical record. Reports and inferences remain distinct from direct observations, and `permission_to_act` remains null.
 
 ## Local persistence and recovery
 
-A receipt may arrive before its operation. Import preserves it as an orphan; `unresolved` lists it and no known-operation projection is invented. When the operation arrives, evidence is evaluated against its actual contents. Unique IDs are essential: hashless orphan evidence cannot by itself detect an unrelated operation reusing that ID.
+A receipt may arrive before its operation. Import preserves it as an orphan; `unresolved` lists it and no known-operation projection is invented. When the operation arrives, evidence is evaluated against its actual contents. Unique IDs are essential: hashless orphan evidence cannot by itself detect an unrelated operation reusing that ID. A receipt may record the scope its recorder believed the operation had: `expected_action`, `expected_context` and `expected_destination`, all three or none, because one destination can serve both a manual and a scheduled run. If any differs from the operation, the receipt is not bound to it: the projection excludes it (`excluded_receipts`) and flags `orphan_action_mismatch`, `orphan_context_mismatch` or `orphan_destination_mismatch`, and `unresolved` lists it under `scope_mismatched_receipts`. A receipt with neither a content hash nor an expected scope is bound by operation ID alone; it is still used, unchanged, but listed in `unscoped_receipts` so it is not presented as scoped proof. Reuse of an ID within the same scope still needs a content hash or unique IDs. Expected scope is a recorder assertion, not authentication.
 
 Each import validates the combined state and inserts in one SQLite transaction. On a conflict or interrupted transaction, the entire import is rolled back. An intention exists durably only after a confirmed commit on a retained host. Nothing here saves an abandoned chat runtime automatically.
 
