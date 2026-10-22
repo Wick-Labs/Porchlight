@@ -8,37 +8,49 @@ Status: prototype, not released or deployed. `work/evidence-core` and draft PR #
 python -m unittest discover -s tests -v
 ```
 
-The initial source/test checkpoint `1e6e0d348adcfddd41a8b3b16b73e1f89e191636` passed 53 local tests on 22 October 2026. GitHub blob hashes were matched against the tested local bytes.
+The integrated review checkpoint passes **88 local tests** on Python 3.13.5 / SQLite 3.46.1 / Linux (22 October 2026). No other runtime or CI result is claimed.
 
-The next checkpoint adds orphan recovery and passes 67 local tests on Python 3.13.5 / SQLite 3.46.1 / Linux. This includes 16 seeded permutations importing each record separately, including receipt-before-operation ordering. These are executed local tests, not CI or independent certification. No other platform is claimed tested.
+Review history:
 
-## Changes from the baseline
+- `1e6e0d348adcfddd41a8b3b16b73e1f89e191636`: first public source and 53 locally passing tests.
+- `e3feb11fec43b01af2f1334c38449529192b50f5`: orphan recovery; 67 locally passing tests including 16 seeded single-record import permutations.
+- Flint independently reported reproducing all 67 tests on e3feb11 and 200 additional shuffled fixture imports without divergent projections. He supplied a review patch with ten new tests, not an unrestricted merge approval.
+- Walpo applied Flint's actual v2 diff, checked its resulting source/test blob hashes, and reproduced seven failures in the unpatched source. All ten review tests passed after the patch.
+- Eleven integration tests added by Walpo cover the interaction of valid and stray acknowledgements, multiple mismatches, distinct attempts, and legacy journal guards. All 88 tests now pass together.
 
-- Keep orphan receipts without inventing their missing operations; expose them through `unresolved` and `check`.
-- Canonically order records and capability reports so arrival order does not affect projections.
-- Count unique records after deduplication so an exact retry at capacity remains idempotent.
-- Bound supersession IDs, reject invalid timezone offsets, handle timestamp overflow as a controlled input error, and explicitly close the initialization connection.
+The initial published source/test bytes and the recovery checkpoint were compared with GitHub blob hashes. Subsequent publication is checked the same way. Passing tests establish those tested outcomes, not general correctness or delivery guarantees.
 
-## Current review priorities
+## Review findings incorporated
 
-1. Observer and identity boundaries: never borrow another observer's direct evidence; reject acknowledgements for copies, containers or the wrong content revision.
-2. Recovery: conflicting IDs must roll back the whole import; retained orphans must resolve only against the actual operation. Canonical JSON key order must not change payload bytes.
-3. Time and claims: tied conflicting observations remain uncertain. Historical read-back is not present availability. Capability observations are not authorisation.
-4. Usability and boundedness: error messages must be useful without echoing payloads. Test failures are evidence of a remaining problem, not a reason to weaken the invariant.
+Flint's patch:
+
+- Acceptance evidence contradicting the intended payload or destination cannot anchor an acknowledgement.
+- A stray acknowledgement for a copy or container does not undo the observer's own matching read-back.
+- Attempt outcomes are resolved from the evidence for that attempt, so a late-recovered acceptance can resolve a timeout. Contradictory accepted/blocked evidence remains uncertain.
+- An acknowledgement earlier than the supplied consistent acceptance timestamp is flagged and left unbound. An acknowledgement before a later read-back remains valid; read-back time is not creation time.
+- A BEFORE INSERT guard rejects replacement of an existing record, including SQL `REPLACE`.
+
+Walpo's integration follow-ups:
+
+- A separate bad acknowledgement does not suppress an otherwise valid bound acknowledgement.
+- Both content and destination contradictions are surfaced when both occur.
+- Older journals missing expected guards remain readable/exportable but refuse new writes. There is no silent schema upgrade or deletion. Export to a private file, initialise a different journal path, and import to recover with the new guards.
+
+The guard follows SQLite's documented distinction: REPLACE can delete conflicting rows without firing delete triggers unless recursive triggers are enabled. See the [official ON CONFLICT documentation](https://www.sqlite.org/lang_conflict.html). The additional insert guard protects ordinary accidental replacement; it does not make the database tamper-proof.
+
+## Open design questions
+
+- **Time semantics:** `observed_at` and `recorded_at` must not be conflated with import time. Delayed observation and different clocks can explain a temporal conflict. The conservative acknowledgement flag is not proof of impossible delivery. A future schema may need separate service-event and observation times.
+- **Orphan identity:** operation IDs must be globally unique within the journal's record type. Use producer-namespaced opaque IDs. A hashless orphan cannot detect a malicious or accidental collision with a later operation of the same ID; richer scope binding remains open.
+- **Historical queries:** capability supports a supplied cutoff; handoff projection uses the evidence currently in the journal. It is not a complete historical knowledge snapshot. Operation declarations and supersession links currently lack a comparable knowledge-time model.
+- **Scale:** there is an explicit limit of 10,000 unique records per collection. Exact retries at capacity work; new records beyond capacity fail without altering history. This bounded O(N)-validation prototype is not a scalable archive.
 
 ## Contribution route
 
-Review `porchlight.py`, `tests/test_porchlight.py` and `tests/test_recovery.py`. Cite the commit, function, expected behaviour and minimal synthetic counterexample. A contributor without write access can supply a review note, fixture, replacement function or unified diff; the integrating contributor preserves attribution and tests the change. Do not post private conversations or live service identifiers in a public issue or patch.
+Review the source, tests and [evidence contract](docs/EVIDENCE.md) at an exact commit. Supply expected behaviour and a minimal synthetic counterexample or patch. Contributors without write access can send patches through the agreed collaboration channel; integration preserves attribution and re-runs tests. Do not post private conversations or live service identifiers in public issues or patches.
 
-Flint contributed adversarial-case design and journal review, including orphan recovery and the correction that containment is not object identity. The implementation and interpretations remain open to challenge.
+Flint contributed adversarial scenarios, journal design review, independently executed checks and the ten-test v2 patch. Walpo implemented the core, orphan recovery and integration follow-ups. Findings and interpretations remain open to challenge.
 
-## Limits to keep visible
+## Limits
 
-- No network clients, sends, retries, scheduling, credentials or permission changes.
-- Input is trusted-recorder testimony, not an authenticated or tamper-proof audit log. SQLite triggers prevent ordinary accidental updates/deletes; a database owner can alter the schema.
-- Local durability depends on the host and filesystem retaining the journal. An unsaved run is not a durable pending contribution.
-- Journals are unencrypted and exports include payloads. Runtime data stays outside the public checkout; `.gitignore` is a convenience, not a privacy guarantee.
-- The prototype rereads/validates the bounded journal on import and projection; it is not intended for large-scale storage.
-- General receipt retraction, cryptographic provenance, schema migration, cross-channel object aliases and external adapters are not implemented.
-- Supersession operates on the supplied local operation registry; it does not authenticate who authorised a replacement.
-- No compatibility promise, package publication, deployment or licence grant has been made.
+No network clients, sends, retries, scheduling, credentials or permission changes. Input is trusted-recorder testimony, not authenticated truth. SQLite guards do not prevent a database owner altering the schema. Local durability depends on the host and filesystem retaining the journal. Journals are unencrypted; exports contain payloads and stay outside the public checkout. General receipt retraction, cryptographic provenance, schema migration, object aliases and external adapters are not implemented. No compatibility promise, package release, deployment or licence grant has been made.

@@ -24,6 +24,7 @@ MAX_RECORDS = 10000
 KINDS = {"accepted", "readback", "not_found", "timeout", "blocked", "ack_received", "report"}
 SCOPE = ("author", "recipient", "action", "context", "destination")
 TABLES = ("operations", "receipts", "observations")
+GUARDS = ("no_deletes", "no_replace", "no_updates")
 RFC3339 = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 
@@ -223,10 +224,33 @@ def project(data: dict[str, Any], operation_id: str, observer: str) -> dict[str,
                 and bool(r.get("remote_ref")))
 
     matched = [r for r in reads if matches(r)]
+    # An acceptance that reports different content or a different destination is
+    # evidence about some other object: flag it and never let it anchor an ack.
+    consistent_accepts = []
+    for r in accepted:
+        content_mismatch = bool(r.get("content_sha256") and r["content_sha256"] != payload_hash)
+        destination_mismatch = bool(r.get("observed_destination") and r["observed_destination"] != op["destination"])
+        if content_mismatch:
+            flags.add("accepted_content_mismatch")
+        if destination_mismatch:
+            flags.add("accepted_destination_mismatch")
+        if not content_mismatch and not destination_mismatch:
+            consistent_accepts.append(r)
     # Only this observer's direct evidence can anchor object identity. No aliases,
     # container refs, matching text, or another observer's receipts are borrowed.
-    anchors = {r["remote_ref"] for r in accepted + matched if r.get("remote_ref")}
-    if len(anchors) > 1:
+    anchor_records = [r for r in consistent_accepts + matched if r.get("remote_ref")]
+    anchors = {r["remote_ref"] for r in anchor_records}
+    # Ack timing is checked against acceptance only: a read-back time is not object
+    # creation time, so an ack may legitimately precede the sender's later read-back.
+    first_acceptance_at: dict[str, datetime] = {}
+    for r in consistent_accepts:
+        if r.get("remote_ref"):
+            at = stamp(r["observed_at"])
+            first_acceptance_at[r["remote_ref"]] = min(at, first_acceptance_at.get(r["remote_ref"], at))
+    # Conflicts among this observer's own anchors/reads make visibility uncertain;
+    # a stray acknowledgement naming another object must not (it only fails to bind).
+    read_conflict = len(anchors) > 1
+    if read_conflict:
         flags.add("remote_identity_conflict")
     for r in reads:
         if not r.get("remote_ref") or not r.get("content_sha256") or not r.get("observed_destination"):
@@ -237,6 +261,7 @@ def project(data: dict[str, Any], operation_id: str, observer: str) -> dict[str,
             flags.add("destination_mismatch")
         if anchors and r.get("remote_ref") and r["remote_ref"] not in anchors:
             flags.add("remote_identity_conflict")
+            read_conflict = True
     bound_acks = []
     for r in direct:
         if r["kind"] != "ack_received":
@@ -249,6 +274,11 @@ def project(data: dict[str, Any], operation_id: str, observer: str) -> dict[str,
             flags.add("unbound_acknowledgement")
         elif len(anchors) != 1 or r["remote_ref"] not in anchors:
             flags.add("remote_identity_conflict")
+        elif r["remote_ref"] in first_acceptance_at and stamp(r["observed_at"]) < first_acceptance_at[r["remote_ref"]]:
+            # The supplied timestamps conflict. Delayed observation or clock skew
+            # may explain this; do not infer real causality. Keep it unbound pending
+            # reconciliation; a later consistent acknowledgement can still bind.
+            flags.add("ack_before_acceptance")
         else:
             bound_acks.append(r)
     visibility_records = [r for r in direct if r["kind"] in {"readback", "not_found"}]
@@ -259,7 +289,7 @@ def project(data: dict[str, Any], operation_id: str, observer: str) -> dict[str,
     visibility = next(iter(states)) if len(states) == 1 else "uncertain"
     if len(states) > 1:
         flags.add("observation_time_conflict")
-    if "remote_identity_conflict" in flags and visibility == "matching":
+    if read_conflict and visibility == "matching":
         visibility = "uncertain"
     attempts: dict[str, set[str]] = {}
     for r in direct:
@@ -285,15 +315,19 @@ def project(data: dict[str, Any], operation_id: str, observer: str) -> dict[str,
     tips = sorted((component & operations.keys()) - referenced)
     if len(tips) > 1:
         flags.add("multiple_current_operations")
+    # Resolve each attempt first: a late-recovered acceptance resolves that attempt's
+    # timeout even when the service's observed_at precedes the caller's timeout.
+    resolved = {key: "uncertain" if {"accepted", "blocked"} <= kinds else "accepted" if "accepted" in kinds
+                else "blocked" if "blocked" in kinds else "timeout" for key, kinds in attempts.items()}
     latest_attempt = _latest([r for r in direct if r["kind"] in {"accepted", "blocked", "timeout"}])
-    attempt_results = {r["kind"] for r in latest_attempt}
+    attempt_results = {resolved[r["attempt_id"]] for r in latest_attempt}
     return {
         "operation_id": operation_id, "observer": observer, "payload_sha256": payload_hash,
         "accepted": bool(accepted), "readback_match": bool(matched),
         "readback_receipts": [r["id"] for r in matched],
         "visibility": visibility, "visibility_as_of": latest_reads[0]["observed_at"] if latest_reads else None,
         "visibility_evidence": [r["id"] for r in latest_reads],
-        "acknowledged": bool(bound_acks) and "remote_identity_conflict" not in flags,
+        "acknowledged": bool(bound_acks) and not read_conflict,
         "ack_receipts": [r["id"] for r in bound_acks],
         "reports": [r["id"] for r in receipts if r["kind"] == "report"],
         "ever_blocked": any(r["kind"] == "blocked" for r in direct),
@@ -337,6 +371,10 @@ END;
 CREATE TRIGGER no_deletes BEFORE DELETE ON records BEGIN
   SELECT RAISE(ABORT,'append-only journal');
 END;
+CREATE TRIGGER no_replace BEFORE INSERT ON records
+WHEN EXISTS (SELECT 1 FROM records WHERE kind = NEW.kind AND id = NEW.id) BEGIN
+  SELECT RAISE(ABORT,'append-only journal');
+END;
 """
 
 
@@ -357,6 +395,13 @@ def initialize(path: Path) -> None:
         connection.close()
 
 
+def journal_guards(connection: sqlite3.Connection) -> dict[str, list[str]]:
+    """Report guard presence, not schema authenticity or tamper resistance."""
+    names = {row[0] for row in connection.execute(
+        "SELECT name FROM sqlite_master WHERE type='trigger' AND tbl_name='records'")}
+    return {"present": sorted(set(GUARDS) & names), "missing": sorted(set(GUARDS) - names)}
+
+
 @contextmanager
 def journal(path: Path, *, write: bool = False) -> Iterator[sqlite3.Connection]:
     mode = "rw" if write else "ro"
@@ -366,6 +411,8 @@ def journal(path: Path, *, write: bool = False) -> Iterator[sqlite3.Connection]:
             raise Invalid("not a Porchlight journal")
         if connection.execute("PRAGMA user_version").fetchone()[0] != 1:
             raise Invalid("unsupported journal schema")
+        if write and journal_guards(connection)["missing"]:
+            raise Invalid("journal guards are incomplete; export and import into a new journal before writing")
         connection.execute("PRAGMA synchronous=EXTRA")
         if not write:
             connection.execute("PRAGMA query_only=ON")
@@ -453,10 +500,11 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 with journal(args.db) as connection:
                     checks = [row[0] for row in connection.execute("PRAGMA integrity_check")]
+                    guards = journal_guards(connection)
                 if checks != ["ok"]:
                     raise Invalid("SQLite integrity check failed")
-                result = {"integrity": "ok", "records": {key: len(data[key]) for key in TABLES},
-                          **unresolved(data)}
+                result = {"integrity": "ok", "append_only_guards": guards,
+                          "records": {key: len(data[key]) for key in TABLES}, **unresolved(data)}
         print(json.dumps(result, indent=2, ensure_ascii=True, allow_nan=False))
         return 0
     except (Invalid, OSError, sqlite3.Error, ValueError) as exc:
