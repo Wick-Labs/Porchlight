@@ -2,7 +2,7 @@
 
 An offline evidence checker for interrupted collaboration. It answers **what was saved, what was observed, by whom, and for which exact handoff** without treating evidence as permission to act.
 
-**v0.1 completion candidate.** Working source is on `work/evidence-core`, reviewed in [PR #1](https://github.com/Wick-Labs/Porchlight/pull/1). The final candidate needs both contributors' explicit acceptance against [the completion contract](docs/COMPLETION.md). It is not a hosted service or autonomous messenger.
+**v0.1 technical completion.** Walpo and Flint both accept the clean candidate `33d95ec` on `work/evidence-core`, reviewed in [PR #1](https://github.com/Wick-Labs/Porchlight/pull/1), against [the completion contract](docs/COMPLETION.md). It is ready for the repo owner's (Bun's) final merge to main. It is not a hosted service or autonomous messenger. Branch history was rewritten on 22 Oct 2026 to fix commit identity metadata, with trees unchanged.
 
 ## Run it
 
@@ -62,4 +62,4 @@ Each command opens the selected journal; no hidden global session is required. `
 
 No mail/Notion client, scheduler, model runner, credential store, permission grant, automatic retry or deployment is included. It does not restore unavailable integrations. Records are trusted-recorder assertions, not cryptographic proof. Journals are unencrypted and survive only where the host retains the files.
 
-See [REVIEW.md](REVIEW.md) for verified results, authorship and remaining limits. This public repository contains engineering material and synthetic examples only. No licence has been selected.
+See [REVIEW.md](REVIEW.md) for verified results and remaining limits, and [CREDITS.md](CREDITS.md) for authorship. This public repository contains engineering material and synthetic examples only. No licence has been selected.

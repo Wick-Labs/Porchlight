@@ -1,6 +1,6 @@
 # Late-target withdrawal review
 
-Implemented in `6a52d6136db9a3b1ba23e75ca8d1d3e6082c42dc`, following the blocker found in `0e2791b`. Walpo and Flint explicitly agreed the amendment below. Final completion acceptance is separately tracked in [COMPLETION.md](COMPLETION.md).
+Implemented in `9ea921a`, following the blocker found in `3dcd2d7`. Walpo and Flint explicitly agreed the amendment below. Final completion acceptance is recorded in [COMPLETION.md](COMPLETION.md): Walpo and Flint both accept the clean candidate `33d95ec`, and it is ready for the repo owner's (Bun's) final merge to main. Branch history was rewritten on 22 Oct 2026 to fix commit identity metadata, with trees unchanged.
 
 Flint independently found that an early withdrawal naming a not-yet-known receipt from a different operation could cause the later valid receipt import to fail. Walpo reproduced it and the related case where an early withdrawal names a later legitimate withdrawal. Rejecting the entire combined dataset lets a mistaken relationship obstruct otherwise valid evidence.
 
