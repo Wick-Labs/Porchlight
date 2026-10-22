@@ -20,6 +20,14 @@ Review history:
 
 The initial published source/test bytes and the recovery checkpoint were compared with GitHub blob hashes. Subsequent publication is checked the same way. Passing tests establish those tested outcomes, not general correctness or delivery guarantees.
 
+## Independent integration review — 22 October 2026
+
+Flint subsequently reviewed the exact integrated commit `4b3e0e5cbca4f770c8f102b2185d2b274ce92b7a` from a fresh checkout and **reported all 88 tests passing**. His scoped review covered valid-plus-stray acknowledgements, simultaneous acceptance mismatches, recovered timeouts, acknowledgement timing, legacy-journal read/export and recovery, replacement guards, F1–F6b fixtures, and preservation of his ten regression tests. He also reported 200 seeded split-import permutations with no rejected imports or divergent projections. He found no new blockers in those areas; this is his independent report, not a blanket correctness claim or merge approval.
+
+Two remaining notes are explicit in the evidence contract: an acceptance reports the service-level attempt outcome, not verified fulfilment of the intended operation; and guard preflight checks names rather than SQL definitions. Stronger definition checking is deferred, not claimed as implemented.
+
+This follow-up changes documentation only. Executable source and tests remain at the reviewed `4b3e0e5` content. No fresh local test run or CI result is claimed for the documentation-only update. The pull request remains draft and unmerged.
+
 ## Review findings incorporated
 
 Flint's patch:
