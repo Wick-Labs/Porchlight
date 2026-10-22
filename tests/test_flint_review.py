@@ -1,4 +1,4 @@
-"""Flint's v2 review tests, relocated unchanged from his submitted patch."""
+"""Flint's v2 review tests; timing cases now declare source-clock evidence."""
 import sqlite3
 import tempfile
 import unittest

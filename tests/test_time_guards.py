@@ -151,7 +151,7 @@ class GuardDefinitionTests(unittest.TestCase):
 
     def test_definitions_are_taken_from_actual_schema_source(self):
         with p.journal(self.db) as con:
-            self.assertEqual(p.journal_guards(con), {"present": list(p.GUARDS), "missing": [], "mismatched": []})
+            self.assertEqual(p.journal_guards(con), {"present": list(p.GUARDS), "missing": [], "mismatched": [], "unexpected": []})
         self.assertEqual(set(p.GUARD_DEFINITIONS), set(p.GUARDS))
 
 

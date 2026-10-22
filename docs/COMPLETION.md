@@ -1,18 +1,19 @@
 # v0.1 completion contract
 
-Agreed by Walpo and Flint on 22 October 2026. This defines completion of the offline evidence/recovery tool, not autonomous delivery or a workaround for integration restrictions.
+Agreed by Walpo and Flint on 22 October 2026. Completion means a usable offline evidence/recovery tool, not autonomous messaging or a workaround for integration restrictions.
 
-1. Separate source-event time, source clock domain and recorder-declared trust from observation time. Strong ordering requires comparable authoritative source clocks; other ordering concerns remain soft notes.
-2. Append-only receipt retraction: original evidence stays visible in export, withdrawal is observer-scoped, missing targets are explicit, and retraction-of-retraction is rejected.
-3. Verify expected SQLite guard SQL definitions before imports, including under the transaction lock. Changed or missing guards allow reading/export but require explicit recovery before writing.
-4. Expected receipt action/context/destination prevent out-of-scope orphan binding. Legacy hashless unscoped evidence is explicitly labelled.
-5. Record and project a real harmless handoff in each direction through the authorised collaboration channels. Real identifiers remain in the private bench, never public fixtures.
-6. Provide a reproducible synthetic CLI counterpart, concise usage documentation, a review record and explicit limits.
+| Item | Acceptance condition | Current result |
+| --- | --- | --- |
+| Source time | Source time, origin and declared trust separate from observation; only comparable authoritative clocks give strong ordering conflicts | Implemented, locally tested; intermediate independently reviewed |
+| Retraction | Append-only, observer-scoped withdrawal; retained originals; missing targets explicit; no retraction of retraction | Flint implementation integrated; active-warning semantics agreed and tested |
+| Guards | Verify expected SQL and reject missing, changed or unexpected triggers before and inside transaction; verify INSERT result | Implemented; Flint's swallowed-write counterexample reproduced and covered |
+| Orphan scope | Expected action/context/destination; out-of-scope evidence excluded; legacy unscoped records labelled | Flint implementation integrated and tested |
+| Live bench | Four harmless real handoffs; actual per-observer receipts; deduplication and reopened-journal replay | Exchanges and acknowledgements observed; complete private replay pending |
+| Usability | Runnable synthetic CLI replay, documentation, review record and explicit limits | Implemented and locally tested; final review pending |
+| Mutual acceptance | Both contributors review and explicitly accept the same final candidate | Pending; no completion claim |
 
-Both contributors must review the exact final candidate and explicitly agree it meets this contract before it is described as complete. Earlier test results or scope agreement are not final approval.
+The current integrated checkpoint has **145 locally passing tests** on Python 3.13.5 / SQLite 3.46.1 / Linux, plus a successful synthetic replay. Test count alone is not completion or independent approval.
 
-## Progress
+Source and tests live in GitHub. Notion and email hold discussion and private live receipts, not a competing source tree. Intermediate branches are reviewable; earlier reviews apply to their named commits only.
 
-The source-time and guard-definition checkpoint has 105 locally passing tests on Python 3.13.5 / SQLite 3.46.1 / Linux. Flint's retraction/scope patch has been received for integration, not yet verified in this checkpoint. The real two-way bench run and final mutual acceptance are pending. The PR remains draft.
-
-No new scheduler, credential handling, network executor, deployment, permission change or licence selection is included.
+No scheduler, service adapter, credential handling, deployment, permission change or licence selection is included. The PR remains draft until final review.
