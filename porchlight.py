@@ -78,7 +78,7 @@ def _fields(record: Any, required: set[str], optional: set[str]) -> None:
                 raise Invalid("duplicate supersession edge")
         else:
             _text(value, key, empty=key == "payload", limit=1048576 if key == "payload" else 4096)
-    for key in ("observed_at", "recorded_at", "recheck_after"):
+    for key in ("observed_at", "recorded_at", "recheck_after", "source_at"):
         if key in record:
             stamp(record[key])
 
@@ -104,9 +104,15 @@ def validate(data: Any) -> dict[str, Any]:
                     raise Invalid("an operation cannot supersede itself")
             elif table == "receipts":
                 _fields(record, {"id", "operation_id", "observer", "kind", "observed_at", "recorded_at", "evidence_ref"},
-                        {"attempt_id", "remote_ref", "content_sha256", "observed_destination", "acknowledged_by"})
+                        {"attempt_id", "remote_ref", "content_sha256", "observed_destination", "acknowledged_by",
+                         "source_at", "source_origin", "source_trust"})
                 if record["kind"] not in KINDS:
                     raise Invalid("unsupported receipt kind")
+                source_fields = {"source_at", "source_origin", "source_trust"}
+                if source_fields & record.keys() and not source_fields <= record.keys():
+                    raise Invalid("source time needs source_at, source_origin and source_trust together")
+                if "source_trust" in record and record["source_trust"] not in {"authoritative", "reported", "untrusted"}:
+                    raise Invalid("unsupported source timestamp trust")
                 if "content_sha256" in record and not SHA256.fullmatch(record["content_sha256"]):
                     raise Invalid("content_sha256 must be lowercase SHA-256 hex")
                 if record["kind"] in {"accepted", "blocked", "timeout"} and not record.get("attempt_id"):
@@ -205,6 +211,29 @@ def _latest(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted((record for record in records if stamp(record["observed_at"]) == latest), key=lambda r: r["id"])
 
 
+def _ack_timing(ack: dict[str, Any], accepts: list[dict[str, Any]]) -> tuple[bool, str | None]:
+    """Compare only declared comparable clocks; these labels are recorder assertions.
+
+    Observation time is not creation time. Missing/untrusted/different-clock source
+    times can yield a soft note but cannot reject an otherwise matching ack.
+    """
+    same_object = [r for r in accepts if r.get("remote_ref") == ack.get("remote_ref")]
+    comparable = [r for r in same_object if ack.get("source_trust") == "authoritative"
+                  and r.get("source_trust") == "authoritative"
+                  and r.get("source_origin") == ack.get("source_origin")]
+    if comparable:
+        earliest = min(stamp(r["source_at"]) for r in comparable)
+        if stamp(ack["source_at"]) < earliest:
+            return False, "ack_before_acceptance"
+        return True, None
+    if same_object and stamp(ack["observed_at"]) < min(stamp(r["observed_at"]) for r in same_object):
+        return True, "ack_observation_order_unverified"
+    source_accepts = [r for r in same_object if "source_at" in r]
+    if "source_at" in ack and source_accepts and stamp(ack["source_at"]) < min(stamp(r["source_at"]) for r in source_accepts):
+        return True, "ack_source_order_unverified"
+    return True, None
+
+
 def project(data: dict[str, Any], operation_id: str, observer: str) -> dict[str, Any]:
     data = validate(data)
     operations = {op["id"]: op for op in data["operations"]}
@@ -218,6 +247,7 @@ def project(data: dict[str, Any], operation_id: str, observer: str) -> dict[str,
     reads = [r for r in direct if r["kind"] == "readback"]
     accepted = [r for r in direct if r["kind"] == "accepted"]
     flags: set[str] = set()
+    notes: set[str] = set()
 
     def matches(r: dict[str, Any]) -> bool:
         return (r.get("content_sha256") == payload_hash and r.get("observed_destination") == op["destination"]
@@ -240,13 +270,6 @@ def project(data: dict[str, Any], operation_id: str, observer: str) -> dict[str,
     # container refs, matching text, or another observer's receipts are borrowed.
     anchor_records = [r for r in consistent_accepts + matched if r.get("remote_ref")]
     anchors = {r["remote_ref"] for r in anchor_records}
-    # Ack timing is checked against acceptance only: a read-back time is not object
-    # creation time, so an ack may legitimately precede the sender's later read-back.
-    first_acceptance_at: dict[str, datetime] = {}
-    for r in consistent_accepts:
-        if r.get("remote_ref"):
-            at = stamp(r["observed_at"])
-            first_acceptance_at[r["remote_ref"]] = min(at, first_acceptance_at.get(r["remote_ref"], at))
     # Conflicts among this observer's own anchors/reads make visibility uncertain;
     # a stray acknowledgement naming another object must not (it only fails to bind).
     read_conflict = len(anchors) > 1
@@ -274,13 +297,14 @@ def project(data: dict[str, Any], operation_id: str, observer: str) -> dict[str,
             flags.add("unbound_acknowledgement")
         elif len(anchors) != 1 or r["remote_ref"] not in anchors:
             flags.add("remote_identity_conflict")
-        elif r["remote_ref"] in first_acceptance_at and stamp(r["observed_at"]) < first_acceptance_at[r["remote_ref"]]:
-            # The supplied timestamps conflict. Delayed observation or clock skew
-            # may explain this; do not infer real causality. Keep it unbound pending
-            # reconciliation; a later consistent acknowledgement can still bind.
-            flags.add("ack_before_acceptance")
         else:
-            bound_acks.append(r)
+            valid_time, timing_note = _ack_timing(r, consistent_accepts)
+            if valid_time:
+                bound_acks.append(r)
+                if timing_note:
+                    notes.add(timing_note)
+            elif timing_note:
+                flags.add(timing_note)
     visibility_records = [r for r in direct if r["kind"] in {"readback", "not_found"}]
     latest_reads = _latest(visibility_records)
     states = {"matching" if r["kind"] == "readback" and matches(r) else
@@ -334,7 +358,7 @@ def project(data: dict[str, Any], operation_id: str, observer: str) -> dict[str,
         "latest_attempt_result": next(iter(attempt_results)) if len(attempt_results) == 1 else "uncertain",
         "superseded_by": superseded_by, "current_operation_ids": tips,
         "unresolved_predecessors": sorted(set(op.get("supersedes", [])) - operations.keys()),
-        "flags": sorted(flags), "permission_to_act": None, "automatic_retry": False,
+        "flags": sorted(flags), "notes": sorted(notes), "permission_to_act": None, "automatic_retry": False,
         "interpretation": "As-of evidence from one observer; not delivery, present availability, or permission guarantees.",
     }
 
@@ -395,11 +419,27 @@ def initialize(path: Path) -> None:
         connection.close()
 
 
+# Compare against the exact definitions used by initialize(). SQLite omits the
+# statement's trailing semicolon in sqlite_schema. Equivalent hand-edited SQL is
+# deliberately not accepted: read/export remain available for explicit recovery.
+GUARD_DEFINITIONS = {match.group(1): match.group(0).strip().removesuffix(";")
+                     for match in re.finditer(r"CREATE TRIGGER (\w+)\b.*?END;", SCHEMA, re.DOTALL)}
+
+
 def journal_guards(connection: sqlite3.Connection) -> dict[str, list[str]]:
-    """Report guard presence, not schema authenticity or tamper resistance."""
-    names = {row[0] for row in connection.execute(
-        "SELECT name FROM sqlite_master WHERE type='trigger' AND tbl_name='records'")}
-    return {"present": sorted(set(GUARDS) & names), "missing": sorted(set(GUARDS) - names)}
+    """Verify expected guard definitions; not authentication of a hostile file owner."""
+    definitions = dict(connection.execute(
+        "SELECT name, sql FROM sqlite_master WHERE type='trigger' AND tbl_name='records'"))
+    present = sorted(set(GUARDS) & definitions.keys())
+    mismatched = [name for name in present if definitions[name] != GUARD_DEFINITIONS[name]]
+    return {"present": present, "missing": sorted(set(GUARDS) - definitions.keys()),
+            "mismatched": mismatched}
+
+
+def _require_guards(connection: sqlite3.Connection) -> None:
+    guards = journal_guards(connection)
+    if guards["missing"] or guards["mismatched"]:
+        raise Invalid("journal guards are missing or changed; export and import into a new journal before writing")
 
 
 @contextmanager
@@ -411,8 +451,8 @@ def journal(path: Path, *, write: bool = False) -> Iterator[sqlite3.Connection]:
             raise Invalid("not a Porchlight journal")
         if connection.execute("PRAGMA user_version").fetchone()[0] != 1:
             raise Invalid("unsupported journal schema")
-        if write and journal_guards(connection)["missing"]:
-            raise Invalid("journal guards are incomplete; export and import into a new journal before writing")
+        if write:
+            _require_guards(connection)
         connection.execute("PRAGMA synchronous=EXTRA")
         if not write:
             connection.execute("PRAGMA query_only=ON")
@@ -440,6 +480,8 @@ def import_data(path: Path, incoming: dict[str, Any]) -> dict[str, int]:
     with journal(path, write=True) as connection:
         connection.execute("BEGIN IMMEDIATE")
         try:
+            # Recheck under the write lock, not just before BEGIN IMMEDIATE.
+            _require_guards(connection)
             existing = snapshot(connection)
             combined = {"schema_version": 1, **{key: existing[key] + incoming.get(key, []) for key in TABLES}}
             combined = validate(combined)
