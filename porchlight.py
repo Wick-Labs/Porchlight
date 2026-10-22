@@ -21,7 +21,9 @@ VERSION = "0.1.0"
 APPLICATION_ID = 0x504F5243
 MAX_BYTES = 8 * 1024 * 1024
 MAX_RECORDS = 10000
-KINDS = {"accepted", "readback", "not_found", "timeout", "blocked", "ack_received", "report"}
+KINDS = {"accepted", "readback", "not_found", "timeout", "blocked", "ack_received", "report", "retract"}
+EXPECTED = ("expected_action", "expected_context", "expected_destination")
+EVIDENCE = {"attempt_id", "remote_ref", "content_sha256", "observed_destination", "acknowledged_by", *EXPECTED}
 SCOPE = ("author", "recipient", "action", "context", "destination")
 TABLES = ("operations", "receipts", "observations")
 GUARDS = ("no_deletes", "no_replace", "no_updates")
@@ -104,9 +106,22 @@ def validate(data: Any) -> dict[str, Any]:
                     raise Invalid("an operation cannot supersede itself")
             elif table == "receipts":
                 _fields(record, {"id", "operation_id", "observer", "kind", "observed_at", "recorded_at", "evidence_ref"},
-                        {"attempt_id", "remote_ref", "content_sha256", "observed_destination", "acknowledged_by"})
+                        EVIDENCE | {"retracts", "reason"})
                 if record["kind"] not in KINDS:
                     raise Invalid("unsupported receipt kind")
+                if record["kind"] == "retract":
+                    # A retraction is a statement about another receipt, not evidence
+                    # about the operation, so it carries none of the evidence fields.
+                    if not {"retracts", "reason"} <= record.keys() or record.keys() & EVIDENCE:
+                        raise Invalid("a retraction needs retracts and reason and carries no evidence fields")
+                    if record["retracts"] == record["id"]:
+                        raise Invalid("a receipt cannot retract itself")
+                elif record.keys() & {"retracts", "reason"}:
+                    raise Invalid("only a retraction may name retracts or reason")
+                # Expected scope is all or nothing: a destination alone could match
+                # a manual and a scheduled run of the same operation ID.
+                if record.keys() & set(EXPECTED) and not set(EXPECTED) <= record.keys():
+                    raise Invalid("expected scope needs expected_action, expected_context and expected_destination")
                 if "content_sha256" in record and not SHA256.fullmatch(record["content_sha256"]):
                     raise Invalid("content_sha256 must be lowercase SHA-256 hex")
                 if record["kind"] in {"accepted", "blocked", "timeout"} and not record.get("attempt_id"):
@@ -153,13 +168,39 @@ def validate(data: Any) -> dict[str, Any]:
                 ready.append(target)
     if visited != len(operations):
         raise Invalid("supersession cycle")
+    # A retraction may name a receipt that has not arrived yet; it is held, like an
+    # orphan. Once both exist they must concern the same operation. Retracting a
+    # retraction is not supported in v0.1, which also rules out retraction cycles.
+    receipts = {r["id"]: r for r in result["receipts"]}
+    for r in receipts.values():
+        target = receipts.get(r.get("retracts", ""))
+        if target is not None and target["operation_id"] != r["operation_id"]:
+            raise Invalid("a retraction cannot cross operations")
+        if target is not None and target["kind"] == "retract":
+            raise Invalid("a retraction cannot be retracted")
     return result
+
+
+def _withdrawn(receipts: list[dict[str, Any]]) -> set[str]:
+    """IDs withdrawn by a retraction from the receipt's own observer."""
+    by_id = {r["id"]: r for r in receipts}
+    return {r["retracts"] for r in receipts if r["kind"] == "retract"
+            and r["retracts"] in by_id and by_id[r["retracts"]]["observer"] == r["observer"]}
+
+
+def _scope_mismatch(receipt: dict[str, Any], op: dict[str, Any]) -> list[str]:
+    # A hashless receipt cannot detect an unrelated operation reusing its ID; the
+    # scope its recorder expected can, for action, context and destination.
+    return [key for key in ("action", "context", "destination")
+            if "expected_" + key in receipt and receipt["expected_" + key] != op[key]]
 
 
 def unresolved(data: dict[str, Any]) -> dict[str, Any]:
     """Expose dangling evidence without inventing the missing operation."""
     data = validate(data)
-    known = {op["id"] for op in data["operations"]}
+    operations = {op["id"]: op for op in data["operations"]}
+    known = operations.keys()
+    receipt_ids = {r["id"] for r in data["receipts"]}
     return {
         "orphan_receipts": [
             {"receipt_id": r["id"], "operation_id": r["operation_id"], "observer": r["observer"]}
@@ -168,6 +209,17 @@ def unresolved(data: dict[str, Any]) -> dict[str, Any]:
         "unresolved_predecessors": [
             {"operation_id": op["id"], "predecessor_id": old}
             for op in data["operations"] for old in sorted(op.get("supersedes", [])) if old not in known
+        ],
+        "unresolved_retractions": [
+            {"receipt_id": r["id"], "retracts": r["retracts"], "observer": r["observer"]}
+            for r in data["receipts"] if r["kind"] == "retract" and r["retracts"] not in receipt_ids
+        ],
+        # Held like orphans: the operation that arrived under this ID is not the
+        # one the receipt expected, so the receipt is not bound to it.
+        "scope_mismatched_receipts": [
+            {"receipt_id": r["id"], "operation_id": r["operation_id"], "observer": r["observer"]}
+            for r in data["receipts"]
+            if r["operation_id"] in known and _scope_mismatch(r, operations[r["operation_id"]])
         ],
     }
 
@@ -212,12 +264,28 @@ def project(data: dict[str, Any], operation_id: str, observer: str) -> dict[str,
         raise Invalid("unknown operation")
     op = operations[operation_id]
     payload_hash = digest(op["payload"])
-    receipts = sorted((r for r in data["receipts"] if r["operation_id"] == operation_id and r["observer"] == observer),
-                      key=lambda r: (stamp(r["observed_at"]), r["id"]))
+    own = sorted((r for r in data["receipts"] if r["operation_id"] == operation_id and r["observer"] == observer),
+                 key=lambda r: (stamp(r["observed_at"]), r["id"]))
+    withdrawn = _withdrawn(data["receipts"])
+    own_ids = {r["id"] for r in own}
+    flags: set[str] = set()
+    excluded = []
+    for r in own:
+        mismatched = _scope_mismatch(r, op)
+        flags.update(f"orphan_{key}_mismatch" for key in mismatched)
+        if mismatched:
+            excluded.append(r["id"])
+    out_of_scope = set(excluded)
+    # Retracted receipts stay in the journal; projections stop using them. Another
+    # observer's retraction is testimony only: labelled, never removes evidence.
+    receipts = [r for r in own if r["kind"] != "retract"
+                and r["id"] not in withdrawn and r["id"] not in out_of_scope]
+    retraction_reports = sorted(r["id"] for r in data["receipts"] if r["kind"] == "retract"
+                                and r["operation_id"] == operation_id and r["observer"] != observer
+                                and r["retracts"] in own_ids)
     direct = [r for r in receipts if r["kind"] != "report"]
     reads = [r for r in direct if r["kind"] == "readback"]
     accepted = [r for r in direct if r["kind"] == "accepted"]
-    flags: set[str] = set()
 
     def matches(r: dict[str, Any]) -> bool:
         return (r.get("content_sha256") == payload_hash and r.get("observed_destination") == op["destination"]
@@ -330,6 +398,11 @@ def project(data: dict[str, Any], operation_id: str, observer: str) -> dict[str,
         "acknowledged": bool(bound_acks) and not read_conflict,
         "ack_receipts": [r["id"] for r in bound_acks],
         "reports": [r["id"] for r in receipts if r["kind"] == "report"],
+        "retracted_receipts": sorted(own_ids & withdrawn),
+        "retraction_reports": retraction_reports, "excluded_receipts": excluded,
+        # Legacy or hashless evidence bound by operation ID alone, not scoped proof.
+        "unscoped_receipts": [r["id"] for r in receipts if r["kind"] != "report"
+                              and "content_sha256" not in r and "expected_action" not in r],
         "ever_blocked": any(r["kind"] == "blocked" for r in direct),
         "latest_attempt_result": next(iter(attempt_results)) if len(attempt_results) == 1 else "uncertain",
         "superseded_by": superseded_by, "current_operation_ids": tips,
