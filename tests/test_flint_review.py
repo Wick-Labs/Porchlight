@@ -40,12 +40,18 @@ class FlintReviewTests(unittest.TestCase):
         self.assertTrue(self.status([accepted, receipt("k", "ack_received", time=T1)])["acknowledged"])
 
     def test_ack_before_acceptance_is_flagged_and_not_bound(self):
-        state = self.status([receipt("k", "ack_received", time=T0), receipt("a", "accepted", time=T1)])
+        # v0.1 integration: strong ordering now requires comparable source clocks.
+        clock = {"source_origin": "fixture:service-clock", "source_trust": "authoritative"}
+        state = self.status([receipt("k", "ack_received", time=T0, source_at=T0, **clock),
+                             receipt("a", "accepted", time=T1, source_at=T1, **clock)])
         self.assertFalse(state["acknowledged"])
         self.assertIn("ack_before_acceptance", state["flags"])
 
     def test_later_ack_still_binds_after_an_early_one(self):
-        rows = [receipt("k0", "ack_received", time=T0), receipt("a", "accepted", time=T1), receipt("k1", "ack_received", time=T2)]
+        clock = {"source_origin": "fixture:service-clock", "source_trust": "authoritative"}
+        rows = [receipt("k0", "ack_received", time=T0, source_at=T0, **clock),
+                receipt("a", "accepted", time=T1, source_at=T1, **clock),
+                receipt("k1", "ack_received", time=T2, source_at=T2, **clock)]
         state = self.status(rows)
         self.assertTrue(state["acknowledged"])
         self.assertEqual(state["ack_receipts"], ["k1"])

@@ -73,7 +73,7 @@ class JournalGuardTests(unittest.TestCase):
 
     def test_new_journal_has_all_expected_guards(self):
         with p.journal(self.db) as con:
-            self.assertEqual(p.journal_guards(con), {'present': list(p.GUARDS), 'missing': []})
+            self.assertEqual(p.journal_guards(con), {'present': list(p.GUARDS), 'missing': [], 'mismatched': []})
 
     def test_legacy_journal_stays_readable_but_write_refused(self):
         with sqlite3.connect(self.db) as con:
