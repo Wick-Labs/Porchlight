@@ -323,10 +323,10 @@ class JournalTests(unittest.TestCase):
             p.import_data(self.db, dataset(operations=[operation("fresh"), operation(payload="conflict")]))
         self.assertEqual(p.read_data(self.db), before)
 
-    def test_sql_failure_mid_import_rolls_back(self):
+    def test_unexpected_trigger_blocks_import_before_writing(self):
         with p.journal(self.db, write=True) as con:
             con.execute("CREATE TRIGGER injected BEFORE INSERT ON records WHEN NEW.kind='receipts' BEGIN SELECT RAISE(ABORT,'test fault'); END")
-        with self.assertRaises(sqlite3.IntegrityError):
+        with self.assertRaises(p.Invalid):
             p.import_data(self.db, dataset(receipts=[receipt("r", "readback")]))
         self.assertEqual(p.read_data(self.db)["operations"], [])
 
